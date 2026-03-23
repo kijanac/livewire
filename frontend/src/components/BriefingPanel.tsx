@@ -70,7 +70,7 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
         </SheetHeader>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto overscroll-contain">
           {loading && (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <svg className="animate-spin motion-reduce:animate-none h-6 w-6 text-primary" viewBox="0 0 24 24" fill="none">

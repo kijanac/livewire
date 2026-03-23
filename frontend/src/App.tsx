@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import { triggerIngest } from "./api";
 import { Button } from "@/components/ui/button";
 
@@ -27,6 +27,16 @@ function useHashRoute(): Route {
 
 function App() {
   const route = useHashRoute();
+  const collectionName = useMemo(() => {
+    if (route.page !== "collection") return null;
+    try {
+      const stubs = JSON.parse(localStorage.getItem("bill_tracker_collections") || "[]");
+      return stubs.find((s: { slug: string }) => s.slug === route.slug)?.name ?? null;
+    } catch {
+      return null;
+    }
+  }, [route]);
+
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -93,7 +103,7 @@ function App() {
 
               {route.page === "collection" && (
                 <span className="text-sm text-muted-foreground font-semibold uppercase tracking-wide">
-                  / Collection
+                  / {collectionName || "Collection"}
                 </span>
               )}
             </div>
