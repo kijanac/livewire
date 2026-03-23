@@ -1,0 +1,496 @@
+import logging
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import case, func
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.database import SessionLocal, get_db
+from app.ingesters.legistar import LegistarIngester
+from app.models import Bill, BillBriefing, CollectionItem
+from app.schemas import (
+    BillBriefingResponse,
+    BillListResponse,
+    BillResponse,
+    CityActivity,
+    CityCount,
+    CityResponse,
+    IngestRequest,
+    IngestResponse,
+    NewsArticle,
+    RadarBill,
+    RadarCluster,
+    RadarResponse,
+    SimilarBill,
+    StatsResponse,
+    StatusCount,
+    TopicCount,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api")
+
+
+def compute_urgency(agenda_date: datetime | None) -> str:
+    if not agenda_date:
+        return "normal"
+    now = datetime.now(tz=timezone.utc)
+    if agenda_date.tzinfo is None:
+        agenda_date = agenda_date.replace(tzinfo=timezone.utc)
+    delta = (agenda_date - now).days
+    if delta < 0:
+        return "normal"
+    if delta <= 7:
+        return "urgent"
+    if delta <= 30:
+        return "soon"
+    return "normal"
+
+
+def bill_to_response(bill: Bill, summary: str | None = None) -> BillResponse:
+    response = BillResponse.model_validate(bill)
+    response.urgency = compute_urgency(bill.agenda_date)
+    response.summary = summary
+    return response
+
+
+def _attach_summaries(
+    bills: list[Bill], db: Session
+) -> list[BillResponse]:
+    """Convert bills to responses with cached briefing summaries attached."""
+    bill_ids = [b.id for b in bills]
+    if not bill_ids:
+        return []
+    briefings = (
+        db.query(BillBriefing.bill_id, BillBriefing.summary)
+        .filter(BillBriefing.bill_id.in_(bill_ids))
+        .all()
+    )
+    summary_map = {bid: s for bid, s in briefings}
+    return [bill_to_response(b, summary_map.get(b.id)) for b in bills]
+
+
+@router.get("/topics", response_model=list[str])
+def list_topics() -> list[str]:
+    from app.tagger import VALID_TOPICS
+
+    return VALID_TOPICS
+
+
+@router.get("/bills/upcoming", response_model=list[BillResponse])
+def get_upcoming_bills(
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[BillResponse]:
+    now = datetime.now(tz=timezone.utc)
+    bills = (
+        db.query(Bill)
+        .filter(Bill.agenda_date.isnot(None), Bill.agenda_date >= now)
+        .order_by(Bill.agenda_date.asc())
+        .limit(limit)
+        .all()
+    )
+    return [bill_to_response(b) for b in bills]
+
+
+@router.get("/bills/radar", response_model=RadarResponse)
+def get_bill_radar(
+    topic: str | None = Query(None),
+    min_cities: int = Query(2, ge=2),
+    db: Session = Depends(get_db),
+) -> RadarResponse:
+    import json as _json
+
+    from app.similarity import cluster_bills
+
+    # Get candidate bills (optionally filtered by topic)
+    query = db.query(Bill)
+    if topic:
+        query = query.filter(Bill.topics.like(f'%"{topic}"%'))
+
+    bills = query.all()
+    bill_map = {b.id: b for b in bills}
+    bill_ids = [b.id for b in bills]
+
+    if len(bill_ids) < 2:
+        return RadarResponse(clusters=[], total_clusters=0, total_bills=0)
+
+    raw_clusters = cluster_bills(bill_ids, distance_threshold=0.7)
+
+    # Build response, filtering to clusters spanning min_cities
+    clusters = []
+    total_bills = 0
+    for rc in raw_clusters:
+        cluster_bills_objs = [bill_map[bid] for bid in rc["bill_ids"] if bid in bill_map]
+        unique_cities = list({b.city_name for b in cluster_bills_objs})
+
+        if len(unique_cities) < min_cities:
+            continue
+
+        radar_bills = []
+        for b in cluster_bills_objs:
+            topics = []
+            if b.topics:
+                try:
+                    topics = _json.loads(b.topics)
+                except (ValueError, TypeError):
+                    pass
+            radar_bills.append(RadarBill(
+                id=b.id,
+                city=b.city,
+                city_name=b.city_name,
+                state=b.state,
+                title=b.title,
+                file_number=b.file_number,
+                status=b.status,
+                type_name=b.type_name,
+                topics=topics,
+                urgency=compute_urgency(b.agenda_date),
+                intro_date=b.intro_date,
+                url=b.url,
+            ))
+
+        clusters.append(RadarCluster(
+            label=rc["label"],
+            top_terms=rc["top_terms"],
+            cities=sorted(unique_cities),
+            city_count=len(unique_cities),
+            bill_count=len(radar_bills),
+            bills=radar_bills,
+        ))
+        total_bills += len(radar_bills)
+
+    return RadarResponse(
+        clusters=clusters,
+        total_clusters=len(clusters),
+        total_bills=total_bills,
+    )
+
+
+@router.get("/bills/{bill_id}/briefing", response_model=BillBriefingResponse)
+def get_bill_briefing(
+    bill_id: int,
+    db: Session = Depends(get_db),
+) -> BillBriefingResponse:
+    import json as _json
+
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+
+    from app.briefing import get_or_create_briefing
+
+    briefing = get_or_create_briefing(db, bill)
+
+    # Parse cached news
+    news = []
+    if briefing.news_json:
+        try:
+            news = [NewsArticle(**a) for a in _json.loads(briefing.news_json)]
+        except (ValueError, TypeError):
+            pass
+
+    # Find similar bills via TF-IDF cosine similarity
+    similar_bills = []
+    from app.similarity import find_similar_bills
+
+    similar_ids_scores = find_similar_bills(bill.id, n=8)
+    if similar_ids_scores:
+        # Filter to different cities only, keep top 5
+        similar_bill_ids = [bid for bid, _ in similar_ids_scores]
+        similar_objs = (
+            db.query(Bill)
+            .filter(Bill.id.in_(similar_bill_ids), Bill.city != bill.city)
+            .all()
+        )
+        # Preserve similarity score ordering
+        bill_map = {b.id: b for b in similar_objs}
+        for bid, score in similar_ids_scores:
+            b = bill_map.get(bid)
+            if b:
+                similar_bills.append(
+                    SimilarBill(
+                        id=b.id,
+                        city_name=b.city_name,
+                        state=b.state,
+                        title=b.title,
+                        status=b.status,
+                        file_number=b.file_number,
+                    )
+                )
+                if len(similar_bills) >= 5:
+                    break
+
+    # Build timeline from bill dates
+    timeline = []
+    if bill.intro_date:
+        timeline.append({"event": "Introduced", "date": bill.intro_date.isoformat()})
+    if bill.agenda_date:
+        timeline.append({"event": "Agenda", "date": bill.agenda_date.isoformat()})
+    if bill.passed_date:
+        timeline.append({"event": "Passed", "date": bill.passed_date.isoformat()})
+    if bill.enactment_date:
+        timeline.append({"event": "Enacted", "date": bill.enactment_date.isoformat()})
+    timeline.sort(key=lambda x: x["date"])
+
+    # Get collection notes for this bill
+    collection_notes = []
+    items = (
+        db.query(CollectionItem)
+        .filter(CollectionItem.bill_id == bill.id, CollectionItem.note.isnot(None), CollectionItem.note != "")
+        .all()
+    )
+    for item in items:
+        if item.collection:
+            collection_notes.append({
+                "collection_name": item.collection.name,
+                "note": item.note,
+            })
+
+    return BillBriefingResponse(
+        bill=bill_to_response(bill),
+        summary=briefing.summary,
+        impact=briefing.impact,
+        organizing=briefing.organizing,
+        reception=briefing.reception,
+        news=news,
+        similar_bills=similar_bills,
+        timeline=timeline,
+        collection_notes=collection_notes,
+    )
+
+
+@router.get("/bills", response_model=BillListResponse)
+def list_bills(
+    city: str | None = Query(None),
+    status: str | None = Query(None),
+    type_name: str | None = Query(None),
+    topic: str | None = Query(None),
+    urgency: str | None = Query(None),
+    search: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> BillListResponse:
+    query = db.query(Bill)
+
+    if city:
+        query = query.filter(Bill.city == city)
+    if status:
+        query = query.filter(Bill.status == status)
+    if type_name:
+        query = query.filter(Bill.type_name == type_name)
+    if topic:
+        query = query.filter(Bill.topics.like(f'%"{topic}"%'))
+    if search:
+        query = query.filter(Bill.title.ilike(f"%{search}%"))
+
+    # Urgency filters translate to date range queries on agenda_date
+    if urgency == "urgent":
+        now = datetime.now(tz=timezone.utc)
+        cutoff = now + timedelta(days=7)
+        query = query.filter(
+            Bill.agenda_date.isnot(None),
+            Bill.agenda_date >= now,
+            Bill.agenda_date <= cutoff,
+        )
+    elif urgency == "soon":
+        now = datetime.now(tz=timezone.utc)
+        cutoff_7 = now + timedelta(days=7)
+        cutoff_30 = now + timedelta(days=30)
+        query = query.filter(
+            Bill.agenda_date.isnot(None),
+            Bill.agenda_date > cutoff_7,
+            Bill.agenda_date <= cutoff_30,
+        )
+
+    total = query.count()
+
+    # Order by intro_date desc (nulls last), then updated_at desc
+    query = query.order_by(
+        case((Bill.intro_date.is_(None), 1), else_=0),
+        Bill.intro_date.desc(),
+        Bill.updated_at.desc(),
+    )
+
+    offset = (page - 1) * per_page
+    bills = query.offset(offset).limit(per_page).all()
+
+    return BillListResponse(
+        bills=_attach_summaries(bills, db),
+        total=total,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.get("/bills/{bill_id}", response_model=BillResponse)
+def get_bill(bill_id: int, db: Session = Depends(get_db)) -> BillResponse:
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    return bill_to_response(bill)
+
+
+@router.get("/cities", response_model=list[CityResponse])
+def list_cities() -> list[CityResponse]:
+    return [
+        CityResponse(id=key, name=cfg["name"], state=cfg["state"])
+        for key, cfg in settings.CITIES.items()
+    ]
+
+
+@router.get("/stats", response_model=StatsResponse)
+def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
+    import json as _json
+
+    now = datetime.now(tz=timezone.utc)
+    week_from_now = now + timedelta(days=7)
+    week_ago = now - timedelta(days=7)
+
+    # Bills moving this week: agenda date within next 7 days
+    moving_this_week = (
+        db.query(func.count(Bill.id))
+        .filter(Bill.agenda_date.isnot(None), Bill.agenda_date >= now, Bill.agenda_date <= week_from_now)
+        .scalar()
+    ) or 0
+
+    # New bills introduced in the last 7 days
+    new_bills_7d = (
+        db.query(func.count(Bill.id))
+        .filter(Bill.intro_date.isnot(None), Bill.intro_date >= week_ago)
+        .scalar()
+    ) or 0
+
+    # Hot topics: most common topics across bills with upcoming agenda dates or recent introductions
+    active_bills = (
+        db.query(Bill.topics)
+        .filter(
+            Bill.topics.isnot(None),
+            Bill.topics != "[]",
+        )
+        .all()
+    )
+    topic_counts: dict[str, int] = {}
+    for (topics_json,) in active_bills:
+        try:
+            for t in _json.loads(topics_json):
+                if t != "other":
+                    topic_counts[t] = topic_counts.get(t, 0) + 1
+        except (ValueError, TypeError):
+            continue
+    hot_topics = [
+        TopicCount(topic=t, count=c)
+        for t, c in sorted(topic_counts.items(), key=lambda x: -x[1])[:3]
+    ]
+
+    # Most active city: city with most bills that have upcoming agenda dates
+    city_upcoming_rows = (
+        db.query(Bill.city, Bill.city_name, func.count(Bill.id).label("cnt"))
+        .filter(Bill.agenda_date.isnot(None), Bill.agenda_date >= now)
+        .group_by(Bill.city, Bill.city_name)
+        .order_by(func.count(Bill.id).desc())
+        .first()
+    )
+    most_active_city = None
+    if city_upcoming_rows:
+        most_active_city = CityActivity(
+            city=city_upcoming_rows[0],
+            city_name=city_upcoming_rows[1],
+            upcoming_count=city_upcoming_rows[2],
+        )
+
+    # Bills grouped by status (top 10) — kept for filters/reference
+    status_rows = (
+        db.query(Bill.status, func.count(Bill.id).label("count"))
+        .filter(Bill.status.isnot(None))
+        .group_by(Bill.status)
+        .order_by(func.count(Bill.id).desc())
+        .limit(10)
+        .all()
+    )
+    by_status = [StatusCount(status=row[0], count=row[1]) for row in status_rows]
+
+    # Bills grouped by city
+    city_rows = (
+        db.query(Bill.city, Bill.city_name, func.count(Bill.id).label("count"))
+        .group_by(Bill.city, Bill.city_name)
+        .order_by(func.count(Bill.id).desc())
+        .all()
+    )
+    by_city = [
+        CityCount(city=row[0], city_name=row[1], count=row[2]) for row in city_rows
+    ]
+
+    return StatsResponse(
+        moving_this_week=moving_this_week,
+        hot_topics=hot_topics,
+        most_active_city=most_active_city,
+        new_bills_7d=new_bills_7d,
+        by_status=by_status,
+        by_city=by_city,
+    )
+
+
+@router.post("/ingest", response_model=IngestResponse)
+def run_ingest(
+    body: IngestRequest | None = None,
+) -> IngestResponse:
+    total_added = 0
+    total_updated = 0
+
+    if body and body.city:
+        cities_to_ingest = {body.city: settings.CITIES.get(body.city)}
+        if not cities_to_ingest[body.city]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown city: {body.city}",
+            )
+    else:
+        cities_to_ingest = settings.CITIES
+
+    for city_key, city_config in cities_to_ingest.items():
+        ingester = LegistarIngester(
+            city_key=city_key,
+            city_config=city_config,
+            base_url=settings.LEGISTAR_BASE_URL,
+        )
+        session = SessionLocal()
+        try:
+            added, updated = ingester.ingest(session)
+            total_added += added
+            total_updated += updated
+        except Exception:
+            logger.exception(
+                "Ingestion failed for city",
+                extra={
+                    "event": "ingestion_failed",
+                    "city": city_key,
+                },
+            )
+        finally:
+            session.close()
+
+    return IngestResponse(
+        message="Ingestion complete",
+        bills_added=total_added,
+        bills_updated=total_updated,
+    )
+
+
+@router.post("/tag", response_model=dict)
+def run_tagging() -> dict:
+    if not settings.OPENROUTER_API_KEY:
+        raise HTTPException(
+            status_code=400, detail="OPENROUTER_API_KEY not configured"
+        )
+    from app.tagger import tag_all_untagged_bills
+
+    session = SessionLocal()
+    try:
+        tagged = tag_all_untagged_bills(session)
+        return {"message": "Tagging complete", "bills_tagged": tagged}
+    finally:
+        session.close()

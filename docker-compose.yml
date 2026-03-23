@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - bill_data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:///./data/bills.db
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+    restart: unless-stopped
+
+volumes:
+  bill_data:
