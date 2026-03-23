@@ -1,3 +1,4 @@
+import heapq
 import json
 import logging
 import time
@@ -111,10 +112,14 @@ def embed_unembedded_bills(session=None) -> int:
 
 
 def find_similar_bills(bill_id: int, n: int = 5) -> list[tuple[int, float]]:
-    """Find N most similar bills by cosine similarity of embeddings."""
+    """Find N most similar bills by cosine similarity of embeddings.
+
+    Processes embeddings in chunks to stay within memory limits on
+    constrained environments (e.g. Render free tier, 512 MB).
+    """
+    CHUNK_SIZE = 200
     session = SessionLocal()
     try:
-        # Get target bill's embedding
         target = (
             session.query(BillEmbedding)
             .filter(BillEmbedding.bill_id == bill_id)
@@ -129,31 +134,40 @@ def find_similar_bills(bill_id: int, n: int = 5) -> list[tuple[int, float]]:
             return []
         target_vec = target_vec / target_norm
 
-        # Get all other embeddings
-        all_embeddings = (
+        # Stream embeddings in chunks, keeping only top-N via min-heap
+        base_query = (
             session.query(BillEmbedding.bill_id, BillEmbedding.embedding_json)
             .filter(BillEmbedding.bill_id != bill_id)
-            .all()
+            .order_by(BillEmbedding.bill_id)
         )
+        top_n: list[tuple[float, int]] = []  # min-heap of (similarity, bill_id)
+        offset = 0
 
-        if not all_embeddings:
-            return []
+        while True:
+            chunk = base_query.limit(CHUNK_SIZE).offset(offset).all()
+            if not chunk:
+                break
 
-        # Compute similarities
-        scores = []
-        for other_id, emb_json in all_embeddings:
-            other_vec = np.array(json.loads(emb_json), dtype=np.float32)
-            other_norm = np.linalg.norm(other_vec)
-            if other_norm == 0:
-                continue
-            similarity = float(np.dot(target_vec, other_vec / other_norm))
-            if similarity > 0.3:  # Threshold to avoid noise
-                scores.append((other_id, similarity))
+            for other_id, emb_json in chunk:
+                other_vec = np.array(json.loads(emb_json), dtype=np.float32)
+                other_norm = np.linalg.norm(other_vec)
+                if other_norm == 0:
+                    continue
+                similarity = float(np.dot(target_vec, other_vec / other_norm))
+                if similarity > 0.3:
+                    if len(top_n) < n:
+                        heapq.heappush(top_n, (similarity, other_id))
+                    elif similarity > top_n[0][0]:
+                        heapq.heapreplace(top_n, (similarity, other_id))
 
-        scores.sort(key=lambda x: -x[1])
-        return scores[:n]
+            offset += CHUNK_SIZE
+
+        return [(bid, score) for score, bid in sorted(top_n, reverse=True)]
     finally:
         session.close()
+
+
+MAX_CLUSTER_BILLS = 500
 
 
 def cluster_bills(
@@ -164,12 +178,17 @@ def cluster_bills(
 
     Uses simple greedy clustering: pick the most connected unassigned bill,
     gather all similar bills above threshold into a cluster. No dense matrix needed.
+    Capped at MAX_CLUSTER_BILLS (most recent) to stay within memory limits.
     """
     session = SessionLocal()
     try:
         query = session.query(BillEmbedding.bill_id, BillEmbedding.embedding_json)
         if bill_ids:
+            if len(bill_ids) > MAX_CLUSTER_BILLS:
+                bill_ids = sorted(bill_ids, reverse=True)[:MAX_CLUSTER_BILLS]
             query = query.filter(BillEmbedding.bill_id.in_(bill_ids))
+        else:
+            query = query.order_by(BillEmbedding.bill_id.desc()).limit(MAX_CLUSTER_BILLS)
         rows = query.all()
 
         if len(rows) < 2:
