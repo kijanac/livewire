@@ -1,0 +1,169 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/fraunces";
+@import "@fontsource-variable/plus-jakarta-sans";
+@import "@fontsource/dm-mono";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius: var(--radius);
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
+  --font-mono: var(--font-mono);
+}
+
+@layer base {
+  :root {
+    /* Fonts */
+    --font-heading: 'Fraunces Variable', 'Georgia', serif;
+    --font-sans: 'Plus Jakarta Sans Variable', 'system-ui', sans-serif;
+    --font-mono: 'DM Mono', 'Menlo', monospace;
+
+    /* Warm cream base */
+    --background: oklch(0.97 0.008 80);
+    --foreground: oklch(0.15 0.02 30);
+
+    /* Cards: warm white */
+    --card: oklch(0.99 0.005 80);
+    --card-foreground: oklch(0.15 0.02 30);
+
+    --popover: oklch(0.99 0.005 80);
+    --popover-foreground: oklch(0.15 0.02 30);
+
+    /* Primary: deep red — the red wedge */
+    --primary: oklch(0.45 0.2 25);
+    --primary-foreground: oklch(0.98 0.005 80);
+
+    /* Secondary: warm sand — visible distinction from muted */
+    --secondary: oklch(0.90 0.025 75);
+    --secondary-foreground: oklch(0.25 0.03 30);
+
+    /* Muted: warm gray */
+    --muted: oklch(0.93 0.01 75);
+    --muted-foreground: oklch(0.42 0.02 60);
+
+    /* Accent: burnt amber */
+    --accent: oklch(0.65 0.18 55);
+    --accent-foreground: oklch(0.98 0.005 80);
+
+    /* Destructive: hot red */
+    --destructive: oklch(0.55 0.24 27);
+
+    /* Borders: visible, warm */
+    --border: oklch(0.82 0.02 70);
+    --input: oklch(0.85 0.015 70);
+    --ring: oklch(0.55 0.05 60);
+
+    /* Chart palette */
+    --chart-1: oklch(0.45 0.2 25);
+    --chart-2: oklch(0.65 0.18 55);
+    --chart-3: oklch(0.55 0.16 145);
+    --chart-4: oklch(0.50 0.015 60);
+    --chart-5: oklch(0.35 0.02 30);
+
+    --radius: 0.375rem;
+
+    --sidebar: oklch(0.96 0.01 75);
+    --sidebar-foreground: oklch(0.15 0.02 30);
+    --sidebar-primary: oklch(0.45 0.2 25);
+    --sidebar-primary-foreground: oklch(0.98 0.005 80);
+    --sidebar-accent: oklch(0.93 0.015 75);
+    --sidebar-accent-foreground: oklch(0.25 0.03 30);
+    --sidebar-border: oklch(0.82 0.02 70);
+    --sidebar-ring: oklch(0.45 0.2 25);
+  }
+
+  * {
+    border-color: var(--border);
+    outline-color: color-mix(in oklch, var(--ring) 50%, transparent);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    line-height: 1.6;
+  }
+  html {
+    font-family: var(--font-sans);
+    font-kerning: normal;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-heading);
+    line-height: 1.2;
+  }
+}
+
+/* Typography utilities */
+@layer components {
+  /* Display heading — poster-size Fraunces with optical sizing */
+  .text-display {
+    font-family: var(--font-heading);
+    font-size: clamp(2rem, 4vw + 1rem, 3.5rem);
+    font-weight: 900;
+    font-variation-settings: 'opsz' 72, 'SOFT' 0, 'WONK' 1;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+
+  /* Hero number — big mono data */
+  .text-hero-number {
+    font-family: var(--font-mono);
+    font-size: clamp(2rem, 3vw + 0.5rem, 3rem);
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Page heading — Fraunces at page-title size */
+  .text-page-heading {
+    font-family: var(--font-heading);
+    font-size: clamp(1.75rem, 2.5vw + 0.5rem, 2.5rem);
+    font-weight: 800;
+    font-variation-settings: 'opsz' 48, 'SOFT' 0, 'WONK' 1;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+
+  /* Section heading — smaller Fraunces */
+  .text-section-heading {
+    font-family: var(--font-heading);
+    font-size: clamp(1rem, 1.5vw + 0.25rem, 1.25rem);
+    font-weight: 700;
+    font-variation-settings: 'opsz' 24;
+    line-height: 1.3;
+  }
+}
+
+/* Constructivist accent bar */
+@layer components {
+  .accent-bar {
+    position: relative;
+  }
+  .accent-bar::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background-color: var(--primary);
+  }
+}

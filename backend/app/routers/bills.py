@@ -95,17 +95,19 @@ def get_upcoming_bills(
     return [bill_to_response(b) for b in bills]
 
 
-@router.get("/bills/radar", response_model=RadarResponse)
-def get_bill_radar(
-    topic: str | None = Query(None),
-    min_cities: int = Query(2, ge=2),
-    db: Session = Depends(get_db),
-) -> RadarResponse:
+# Radar response cache: keyed by topic, stores (response, timestamp)
+import time as _time
+
+_radar_cache: dict[str, tuple[RadarResponse, float]] = {}
+_RADAR_CACHE_TTL = 600  # 10 minutes
+
+
+def _build_radar(topic: str | None, min_cities: int, db: Session) -> RadarResponse:
+    """Build radar response with clustering and LLM labels."""
     import json as _json
 
     from app.similarity import cluster_bills
 
-    # Get candidate bills (optionally filtered by topic)
     query = db.query(Bill)
     if topic:
         query = query.filter(Bill.topics.like(f'%"{topic}"%'))
@@ -119,7 +121,6 @@ def get_bill_radar(
 
     raw_clusters = cluster_bills(bill_ids, distance_threshold=0.7)
 
-    # Build response, filtering to clusters spanning min_cities
     clusters = []
     total_bills = 0
     for rc in raw_clusters:
@@ -162,11 +163,77 @@ def get_bill_radar(
         ))
         total_bills += len(radar_bills)
 
+    # Generate human-readable cluster labels via LLM
+    if clusters and settings.OPENROUTER_API_KEY:
+        try:
+            import httpx
+
+            cluster_descriptions = []
+            for i, c in enumerate(clusters):
+                titles = [b.title[:80] for b in c.bills[:4]]
+                cluster_descriptions.append(
+                    f"Cluster {i + 1} ({', '.join(c.cities)}): "
+                    + " | ".join(titles)
+                )
+
+            prompt = (
+                "For each cluster of related city council bills below, write a short "
+                "human-readable label (3-6 words) that an organizer would use. "
+                "Return a JSON array of strings, one label per cluster.\n\n"
+                + "\n".join(cluster_descriptions)
+            )
+
+            payload = {
+                "model": settings.OPENROUTER_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "response_format": {"type": "json_object"},
+            }
+            headers = {
+                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            }
+
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(settings.OPENROUTER_BASE_URL, json=payload, headers=headers)
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
+                parsed = _json.loads(content)
+                labels_list = parsed if isinstance(parsed, list) else parsed.get("labels", [])
+                for i, label in enumerate(labels_list):
+                    if i < len(clusters):
+                        clusters[i].label = str(label)
+        except Exception as exc:
+            logger.warning(
+                "Failed to generate cluster labels",
+                extra={"event": "cluster_label_generation_failed", "error": str(exc)},
+            )
+
     return RadarResponse(
         clusters=clusters,
         total_clusters=len(clusters),
         total_bills=total_bills,
     )
+
+
+@router.get("/bills/radar", response_model=RadarResponse)
+def get_bill_radar(
+    topic: str | None = Query(None),
+    min_cities: int = Query(2, ge=2),
+    db: Session = Depends(get_db),
+) -> RadarResponse:
+    cache_key = topic or "__all__"
+    now = _time.time()
+
+    # Return cached response if fresh
+    if cache_key in _radar_cache:
+        cached_response, cached_at = _radar_cache[cache_key]
+        if (now - cached_at) < _RADAR_CACHE_TTL:
+            return cached_response
+
+    response = _build_radar(topic, min_cities, db)
+    _radar_cache[cache_key] = (response, now)
+    return response
 
 
 @router.get("/bills/{bill_id}/briefing", response_model=BillBriefingResponse)
