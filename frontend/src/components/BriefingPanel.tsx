@@ -90,7 +90,7 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
           {!loading && briefing && (
             <div>
               {/* Bill Header */}
-              <div className="p-4 sm:p-6">
+              <div className="animate-fade-up p-4 sm:p-6">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-xs font-medium text-muted-foreground">
                     {briefing.bill.city_name}, {briefing.bill.state}
@@ -146,7 +146,7 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
               {/* Summary */}
               {briefing.summary && (
                 <>
-                  <div className="p-4 sm:p-6">
+                  <div className="animate-fade-up p-4 sm:p-6" style={{ animationDelay: "75ms" }}>
                     <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">
                       Summary
                     </h4>
@@ -161,7 +161,7 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
               {/* Impact */}
               {briefing.impact && (
                 <>
-                  <div className="p-4 sm:p-6 bg-primary/5 border-l-4 border-primary">
+                  <div className="animate-fade-up p-4 sm:p-6 bg-primary/5 border-l-4 border-primary" style={{ animationDelay: "150ms" }}>
                     <h4 className="text-xs font-bold text-primary uppercase tracking-wider mb-2">
                       Why This Matters
                     </h4>
@@ -176,7 +176,7 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
               {/* Organizing Activity */}
               {briefing.organizing && (
                 <>
-                  <div className="p-4 sm:p-6 bg-accent/10 border-l-4 border-accent">
+                  <div className="animate-fade-up p-4 sm:p-6 bg-accent/10 border-l-4 border-accent" style={{ animationDelay: "225ms" }}>
                     <h4 className="text-xs font-bold text-foreground uppercase tracking-wider mb-2">
                       Organizing Activity
                     </h4>
@@ -191,7 +191,7 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
               {/* Public Reception */}
               {briefing.reception && (
                 <>
-                  <div className="p-4 sm:p-6">
+                  <div className="animate-fade-up p-4 sm:p-6" style={{ animationDelay: "300ms" }}>
                     <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">
                       Public Reception
                     </h4>

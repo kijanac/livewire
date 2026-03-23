@@ -97,15 +97,16 @@ function BillTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {bills.map((bill) => (
+          {bills.map((bill, i) => (
             <TableRow
               key={bill.id}
               onClick={() => setSelectedBillId(bill.id)}
               className={cn(
-                "cursor-pointer",
+                "animate-fade-up cursor-pointer",
                 bill.urgency === "urgent" && "border-l-4 border-l-primary",
                 bill.urgency === "soon" && "border-l-4 border-l-accent"
               )}
+              style={{ animationDelay: `${i * 30}ms` }}
             >
               <TableCell className="px-2 py-2 sm:px-4 sm:py-3 text-sm text-foreground align-top">
                 <div className="flex flex-col gap-0.5">

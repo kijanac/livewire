@@ -178,7 +178,7 @@ function Filters({ filters, cities, topics, onChange }: FiltersProps) {
 
       {/* Secondary filters: status, type, urgency — toggleable */}
       {showMore && (
-        <div className="flex flex-wrap gap-2 sm:gap-3">
+        <div className="flex flex-wrap gap-2 sm:gap-3 animate-fade-up">
           <FilterSelect
             value={filters.status}
             onValueChange={(val) => update("status", val)}

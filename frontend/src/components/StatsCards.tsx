@@ -31,6 +31,7 @@ function StatsCards({ stats, loading }: StatsCardsProps) {
       {/* Up for Action This Week */}
       <Card
         className={cn(
+          "animate-fade-up",
           stats.moving_this_week > 0 && "bg-primary text-primary-foreground border-primary"
         )}
       >
@@ -69,7 +70,7 @@ function StatsCards({ stats, loading }: StatsCardsProps) {
       </Card>
 
       {/* Trending Issues */}
-      <Card>
+      <Card className="animate-fade-up" style={{ animationDelay: "75ms" }}>
         <CardContent>
           <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
             Trending Issues
@@ -94,7 +95,7 @@ function StatsCards({ stats, loading }: StatsCardsProps) {
       </Card>
 
       {/* Hottest City */}
-      <Card>
+      <Card className="animate-fade-up" style={{ animationDelay: "150ms" }}>
         <CardContent>
           <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
             Hottest City
@@ -117,8 +118,10 @@ function StatsCards({ stats, loading }: StatsCardsProps) {
       {/* Just Filed */}
       <Card
         className={cn(
+          "animate-fade-up",
           stats.new_bills_7d > 0 && "bg-accent text-accent-foreground border-accent"
         )}
+        style={{ animationDelay: "225ms" }}
       >
         <CardContent>
           <div

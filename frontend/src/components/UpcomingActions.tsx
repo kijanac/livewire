@@ -59,11 +59,12 @@ function UpcomingActions({ bills, loading }: UpcomingActionsProps) {
             >
               <Card
                 className={cn(
-                  "transition-colors hover:shadow-md h-full cursor-pointer",
+                  "animate-fade-up transition-shadow hover:shadow-md h-full cursor-pointer",
                   isUrgent
                     ? "border-l-4 border-l-primary"
                     : "border-l-4 border-l-accent"
                 )}
+                style={{ animationDelay: `${bills.indexOf(bill) * 75}ms` }}
               >
                 <CardContent>
                   <div className="flex items-center justify-between mb-1">
