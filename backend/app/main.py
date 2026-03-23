@@ -85,6 +85,25 @@ def run_ingestion_all_cities() -> None:
         finally:
             session.close()
 
+    # Generate embeddings for any new bills
+    if settings.OPENROUTER_API_KEY:
+        from app.similarity import embed_unembedded_bills
+
+        try:
+            embedded = embed_unembedded_bills()
+            logger.info(
+                "Post-ingestion embeddings completed",
+                extra={
+                    "event": "post_ingestion_embeddings_completed",
+                    "bills_embedded": embedded,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Post-ingestion embeddings failed",
+                extra={"event": "post_ingestion_embeddings_failed"},
+            )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:

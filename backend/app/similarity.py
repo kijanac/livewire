@@ -2,193 +2,234 @@ import json
 import logging
 import time
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import httpx
+import numpy as np
 
+from app.config import settings
 from app.database import SessionLocal
-from app.models import Bill
+from app.models import Bill, BillEmbedding
 
 logger = logging.getLogger(__name__)
 
-# Module-level cache
-_index: "SimilarityIndex | None" = None
-_index_built_at: float = 0
-INDEX_TTL_SECONDS = 3600  # rebuild after 1 hour
+EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2:free"
+EMBEDDING_BATCH_SIZE = 50
 
 
-class SimilarityIndex:
-    """TF-IDF vector index over all bill titles + topics for similarity search."""
-
-    def __init__(self, bill_ids: list[int], texts: list[str]) -> None:
-        self.bill_ids = bill_ids
-        self.id_to_idx = {bid: i for i, bid in enumerate(bill_ids)}
-        self.vectorizer = TfidfVectorizer(
-            max_features=10000,
-            stop_words="english",
-            ngram_range=(1, 2),
-            sublinear_tf=True,
+def _call_embeddings_api(texts: list[str]) -> list[list[float]]:
+    """Call OpenRouter embeddings API. Returns list of embedding vectors."""
+    headers = {
+        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": EMBEDDING_MODEL,
+        "input": texts,
+    }
+    with httpx.Client(timeout=30.0) as client:
+        response = client.post(
+            "https://openrouter.ai/api/v1/embeddings",
+            json=payload,
+            headers=headers,
         )
-        self.matrix = self.vectorizer.fit_transform(texts)
+        response.raise_for_status()
+        data = response.json()
+        # Sort by index to preserve order
+        sorted_data = sorted(data["data"], key=lambda x: x["index"])
+        return [item["embedding"] for item in sorted_data]
+
+
+def embed_unembedded_bills(session=None) -> int:
+    """Generate and store embeddings for bills that don't have them yet."""
+    if not settings.OPENROUTER_API_KEY:
+        return 0
+
+    own_session = session is None
+    if own_session:
+        session = SessionLocal()
+
+    try:
+        # Find bills without embeddings
+        embedded_ids = {
+            row[0]
+            for row in session.query(BillEmbedding.bill_id).all()
+        }
+        unembedded = (
+            session.query(Bill.id, Bill.title, Bill.topics, Bill.city_name)
+            .filter(Bill.id.notin_(embedded_ids) if embedded_ids else True)
+            .all()
+        )
+
+        if not unembedded:
+            return 0
+
+        total = 0
+        for i in range(0, len(unembedded), EMBEDDING_BATCH_SIZE):
+            batch = unembedded[i : i + EMBEDDING_BATCH_SIZE]
+            texts = []
+            for bill_id, title, topics_json, city_name in batch:
+                topics_str = ""
+                if topics_json:
+                    try:
+                        topics_str = " ".join(
+                            t.replace("_", " ") for t in json.loads(topics_json)
+                        )
+                    except (ValueError, TypeError):
+                        pass
+                texts.append(f"{title} {topics_str} {city_name}")
+
+            try:
+                embeddings = _call_embeddings_api(texts)
+                for (bill_id, _, _, _), emb in zip(batch, embeddings):
+                    session.add(
+                        BillEmbedding(
+                            bill_id=bill_id,
+                            embedding_json=json.dumps(emb),
+                        )
+                    )
+                session.commit()
+                total += len(embeddings)
+                time.sleep(0.2)  # Rate limit courtesy
+            except Exception as exc:
+                logger.error(
+                    "Embedding batch failed",
+                    extra={
+                        "event": "embedding_batch_failed",
+                        "error": str(exc),
+                        "batch_start": i,
+                    },
+                )
+                session.rollback()
+
         logger.info(
-            "Similarity index built",
-            extra={
-                "event": "similarity_index_built",
-                "num_bills": len(bill_ids),
-                "vocab_size": len(self.vectorizer.vocabulary_),
-            },
+            "Embeddings generated",
+            extra={"event": "embeddings_generated", "count": total},
         )
-
-    def find_similar(
-        self, bill_id: int, n: int = 5, exclude_same_city: str | None = None
-    ) -> list[tuple[int, float]]:
-        """Return top-N similar bill IDs with scores, excluding the bill itself."""
-        idx = self.id_to_idx.get(bill_id)
-        if idx is None:
-            return []
-
-        bill_vector = self.matrix[idx]
-        scores = cosine_similarity(bill_vector, self.matrix).flatten()
-
-        # Zero out self
-        scores[idx] = 0.0
-
-        # Get top N+extra indices (we may filter some out)
-        top_count = min(n * 3, len(scores))
-        top_indices = scores.argsort()[::-1][:top_count]
-
-        results = []
-        for i in top_indices:
-            if scores[i] <= 0.0:
-                break
-            results.append((self.bill_ids[i], float(scores[i])))
-            if len(results) >= n:
-                break
-
-        return results
+        return total
+    finally:
+        if own_session:
+            session.close()
 
 
-def _build_index() -> SimilarityIndex:
-    """Build a fresh similarity index from all bills in the database."""
+def find_similar_bills(bill_id: int, n: int = 5) -> list[tuple[int, float]]:
+    """Find N most similar bills by cosine similarity of embeddings."""
     session = SessionLocal()
     try:
-        bills = session.query(Bill.id, Bill.title, Bill.topics, Bill.city_name).all()
+        # Get target bill's embedding
+        target = (
+            session.query(BillEmbedding)
+            .filter(BillEmbedding.bill_id == bill_id)
+            .first()
+        )
+        if not target:
+            return []
 
-        bill_ids = []
-        texts = []
-        for bill_id, title, topics_json, city_name in bills:
-            # Combine title + topics + city for richer embeddings
-            topics_str = ""
-            if topics_json:
-                try:
-                    topics_list = json.loads(topics_json)
-                    topics_str = " ".join(t.replace("_", " ") for t in topics_list)
-                except (ValueError, TypeError):
-                    pass
-            text = f"{title} {topics_str} {city_name}"
-            bill_ids.append(bill_id)
-            texts.append(text)
+        target_vec = np.array(json.loads(target.embedding_json), dtype=np.float32)
+        target_norm = np.linalg.norm(target_vec)
+        if target_norm == 0:
+            return []
+        target_vec = target_vec / target_norm
 
-        return SimilarityIndex(bill_ids, texts)
+        # Get all other embeddings
+        all_embeddings = (
+            session.query(BillEmbedding.bill_id, BillEmbedding.embedding_json)
+            .filter(BillEmbedding.bill_id != bill_id)
+            .all()
+        )
+
+        if not all_embeddings:
+            return []
+
+        # Compute similarities
+        scores = []
+        for other_id, emb_json in all_embeddings:
+            other_vec = np.array(json.loads(emb_json), dtype=np.float32)
+            other_norm = np.linalg.norm(other_vec)
+            if other_norm == 0:
+                continue
+            similarity = float(np.dot(target_vec, other_vec / other_norm))
+            if similarity > 0.3:  # Threshold to avoid noise
+                scores.append((other_id, similarity))
+
+        scores.sort(key=lambda x: -x[1])
+        return scores[:n]
     finally:
         session.close()
 
 
-def get_index() -> SimilarityIndex:
-    """Get the cached similarity index, rebuilding if stale."""
-    global _index, _index_built_at
-
-    now = time.time()
-    if _index is None or (now - _index_built_at) > INDEX_TTL_SECONDS:
-        _index = _build_index()
-        _index_built_at = now
-
-    return _index
-
-
-def find_similar_bills(bill_id: int, n: int = 5) -> list[tuple[int, float]]:
-    """Find N most similar bills by TF-IDF cosine similarity."""
-    index = get_index()
-    return index.find_similar(bill_id, n=n)
-
-
 def cluster_bills(
     bill_ids: list[int] | None = None,
-    distance_threshold: float = 0.7,
+    distance_threshold: float = 0.35,
 ) -> list[dict]:
-    """Cluster bills by TF-IDF similarity. Returns list of cluster dicts.
+    """Cluster bills by embedding similarity. Returns list of cluster dicts.
 
-    Each cluster: {"label": str, "bill_ids": list[int], "top_terms": list[str]}
-    Only returns clusters spanning 2+ unique cities.
+    Uses simple greedy clustering: pick the most connected unassigned bill,
+    gather all similar bills above threshold into a cluster. No dense matrix needed.
     """
-    from sklearn.cluster import AgglomerativeClustering
+    session = SessionLocal()
+    try:
+        query = session.query(BillEmbedding.bill_id, BillEmbedding.embedding_json)
+        if bill_ids:
+            query = query.filter(BillEmbedding.bill_id.in_(bill_ids))
+        rows = query.all()
 
-    index = get_index()
+        if len(rows) < 2:
+            return []
 
-    if bill_ids:
-        # Map to matrix indices
-        indices = [index.id_to_idx[bid] for bid in bill_ids if bid in index.id_to_idx]
-    else:
-        indices = list(range(len(index.bill_ids)))
+        # Load embeddings into memory
+        ids = []
+        vecs = []
+        for bid, emb_json in rows:
+            vec = np.array(json.loads(emb_json), dtype=np.float32)
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                ids.append(bid)
+                vecs.append(vec / norm)
 
-    if len(indices) < 2:
-        return []
+        if len(ids) < 2:
+            return []
 
-    sub_matrix = index.matrix[indices]
+        mat = np.stack(vecs)  # (N, dim) — N × dim, not N × N
+        assigned = set()
+        clusters = []
 
-    # Cosine distance = 1 - cosine_similarity
-    sim_matrix = cosine_similarity(sub_matrix)
-    distance_matrix = 1.0 - sim_matrix
+        for i in range(len(ids)):
+            if ids[i] in assigned:
+                continue
 
-    clustering = AgglomerativeClustering(
-        n_clusters=None,
-        distance_threshold=distance_threshold,
-        metric="precomputed",
-        linkage="average",
-    )
-    labels = clustering.fit_predict(distance_matrix)
+            # Find all bills similar to this one
+            sims = mat @ mat[i]  # (N,) dot products — O(N×dim), not O(N²)
+            cluster_indices = [
+                j for j in range(len(ids))
+                if sims[j] >= distance_threshold and ids[j] not in assigned
+            ]
 
-    # Group bills by cluster label
-    from collections import defaultdict
+            if len(cluster_indices) < 2:
+                assigned.add(ids[i])
+                continue
 
-    clusters_map: dict[int, list[int]] = defaultdict(list)
-    for i, label in enumerate(labels):
-        clusters_map[label].append(indices[i])
+            cluster_bill_ids = [ids[j] for j in cluster_indices]
+            for bid in cluster_bill_ids:
+                assigned.add(bid)
 
-    # Build cluster info
-    feature_names = index.vectorizer.get_feature_names_out()
-    results = []
+            # Extract label from centroid
+            centroid = mat[cluster_indices].mean(axis=0)
+            # Use bill titles for the label (will be replaced by LLM in the router)
+            clusters.append({
+                "label": f"Cluster {len(clusters) + 1}",
+                "bill_ids": cluster_bill_ids,
+                "top_terms": [],
+            })
 
-    for cluster_indices in clusters_map.values():
-        cluster_bill_ids = [index.bill_ids[i] for i in cluster_indices]
+        clusters.sort(key=lambda c: len(c["bill_ids"]), reverse=True)
 
-        if len(cluster_bill_ids) < 2:
-            continue
-
-        # Extract top terms for this cluster
-        cluster_vector = sub_matrix[[indices.index(i) for i in cluster_indices if i in indices]].mean(axis=0)
-        cluster_array = cluster_vector.A1 if hasattr(cluster_vector, "A1") else cluster_vector
-        top_term_indices = cluster_array.argsort()[::-1][:5]
-        top_terms = [feature_names[j] for j in top_term_indices if cluster_array[j] > 0]
-
-        # Generate a readable label from top 2-3 terms
-        label = " / ".join(t.replace("_", " ").title() for t in top_terms[:3])
-
-        results.append({
-            "label": label,
-            "bill_ids": cluster_bill_ids,
-            "top_terms": list(top_terms),
-        })
-
-    # Sort by cluster size descending
-    results.sort(key=lambda c: len(c["bill_ids"]), reverse=True)
-
-    logger.info(
-        "Bill clustering completed",
-        extra={
-            "event": "clustering_completed",
-            "input_bills": len(indices),
-            "clusters_found": len(results),
-        },
-    )
-
-    return results
+        logger.info(
+            "Bill clustering completed",
+            extra={
+                "event": "clustering_completed",
+                "input_bills": len(ids),
+                "clusters_found": len(clusters),
+            },
+        )
+        return clusters
+    finally:
+        session.close()

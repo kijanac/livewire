@@ -120,3 +120,19 @@ class BillBriefing(Base):
 
     def __repr__(self) -> str:
         return f"<BillBriefing(id={self.id}, bill_id={self.bill_id})>"
+
+
+class BillEmbedding(Base):
+    __tablename__ = "bill_embeddings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bill_id = Column(
+        Integer,
+        ForeignKey("bills.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    embedding_json = Column(Text, nullable=False)  # JSON array of floats
+
+    def __repr__(self) -> str:
+        return f"<BillEmbedding(id={self.id}, bill_id={self.bill_id})>"
