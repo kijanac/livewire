@@ -1,5 +1,6 @@
 import json
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,6 +31,7 @@ from app.schemas import (
     NewsArticle,
     NewsFrame,
     OfficialResponse,
+    OfficialVotingPattern,
     PowerSection,
     RadarBill,
     RadarCluster,
@@ -41,6 +43,7 @@ from app.schemas import (
     TopicCount,
     VoteRecordResponse,
     VoteSummary,
+    VotingPatterns,
 )
 
 logger = logging.getLogger(__name__)
@@ -339,7 +342,7 @@ def get_bill_radar(
 
 # --- Coalition Intelligence ---
 
-_coalitions_cache: tuple[CoalitionsResponse, float] | None = None
+_coalitions_cache: dict[str, tuple[CoalitionsResponse, float]] = {}
 _COALITIONS_CACHE_TTL = 600
 
 
@@ -362,7 +365,6 @@ def _build_coalitions(db: Session) -> CoalitionsResponse:
     ).filter(Bill.topics.isnot(None)).all()
 
     # Aggregate: topic → city → outcome counts
-    from collections import defaultdict
     topic_city: dict[str, dict[str, dict]] = defaultdict(
         lambda: defaultdict(lambda: {"city": "", "city_name": "", "p": 0, "f": 0, "pe": 0})
     )
@@ -476,15 +478,14 @@ def _classify_outcome_from_fields(status: str | None, passed_date: object) -> st
 
 @router.get("/coalitions", response_model=CoalitionsResponse)
 def get_coalitions(db: Session = Depends(get_db)) -> CoalitionsResponse:
-    global _coalitions_cache
     now = _time.time()
-    if _coalitions_cache:
-        cached_response, cached_at = _coalitions_cache
+    if "__all__" in _coalitions_cache:
+        cached_response, cached_at = _coalitions_cache["__all__"]
         if (now - cached_at) < _COALITIONS_CACHE_TTL:
             return cached_response
 
     response = _build_coalitions(db)
-    _coalitions_cache = (response, now)
+    _coalitions_cache["__all__"] = (response, now)
     return response
 
 
@@ -532,7 +533,92 @@ def _build_coalition_brief(
     )
 
 
-def _build_power_section(db: Session, bill: Bill, briefing: BillBriefing) -> PowerSection:
+_PATTERN_SIMILARITY_THRESHOLD = 0.5
+_PATTERN_MAX_SIMILAR = 10
+_SWING_LOW = 30.0
+_SWING_HIGH = 70.0
+
+
+def _build_voting_patterns(
+    db: Session,
+    current_vote_records: list[VoteRecord],
+    similar_ids_scores: list[tuple[int, float]],
+) -> VotingPatterns | None:
+    """Compute voting alignment for officials on similar bills."""
+    official_ids = {
+        vr.official_id for vr in current_vote_records if vr.official_id
+    }
+    if not official_ids:
+        return None
+
+    similar_bill_ids = [
+        bid for bid, score in similar_ids_scores if score >= _PATTERN_SIMILARITY_THRESHOLD
+    ]
+    if not similar_bill_ids:
+        return None
+
+    # Query all votes by these officials on similar bills in one query
+    history = (
+        db.query(VoteRecord)
+        .options(selectinload(VoteRecord.official))
+        .filter(
+            VoteRecord.bill_id.in_(similar_bill_ids),
+            VoteRecord.official_id.in_(official_ids),
+        )
+        .all()
+    )
+
+    if not history:
+        return None
+
+    # Aggregate per official: yea / (yea + nay)
+    agg: dict[int, dict] = defaultdict(lambda: {"name": "", "district": None, "yea": 0, "nay": 0})
+    for vr in history:
+        entry = agg[vr.official_id]
+        if vr.official:
+            entry["name"] = vr.official.name
+            entry["district"] = vr.official.district
+        if vr.vote_value == "yea":
+            entry["yea"] += 1
+        elif vr.vote_value == "nay":
+            entry["nay"] += 1
+
+    patterns = []
+    swing_voters = []
+    for oid, data in agg.items():
+        total = data["yea"] + data["nay"]
+        if total == 0:
+            continue
+        pct = round((data["yea"] / total) * 100, 1)
+        is_swing = _SWING_LOW <= pct <= _SWING_HIGH
+        if is_swing:
+            swing_voters.append(data["name"])
+        patterns.append(OfficialVotingPattern(
+            official_id=oid,
+            name=data["name"],
+            district=data["district"],
+            alignment_pct=pct,
+            yea=data["yea"],
+            nay=data["nay"],
+            total=total,
+            is_swing=is_swing,
+        ))
+
+    if not patterns:
+        return None
+
+    patterns.sort(key=lambda p: p.alignment_pct, reverse=True)
+
+    return VotingPatterns(
+        patterns=patterns,
+        similar_bill_count=len(similar_bill_ids),
+        swing_voters=swing_voters,
+    )
+
+
+def _build_power_section(
+    db: Session, bill: Bill, briefing: BillBriefing, similar_ids_scores: list[tuple[int, float]],
+) -> PowerSection:
     """Build the power intelligence section for a bill."""
     city_config = settings.CITIES.get(bill.city)
     if city_config and not bill.enriched_at:
@@ -589,9 +675,12 @@ def _build_power_section(db: Session, bill: Bill, briefing: BillBriefing) -> Pow
         for a in action_rows
     ]
 
+    # Build voting patterns from similar bills
+    voting_patterns = _build_voting_patterns(db, vote_records, similar_ids_scores)
+
     analysis = briefing.power_analysis
     if not analysis and (sponsors or vote_records or action_rows) and settings.OPENROUTER_API_KEY:
-        analysis = _generate_power_analysis(bill, sponsors, votes, actions)
+        analysis = _generate_power_analysis(bill, sponsors, votes, actions, voting_patterns)
         briefing.power_analysis = analysis
         db.commit()
 
@@ -600,6 +689,7 @@ def _build_power_section(db: Session, bill: Bill, briefing: BillBriefing) -> Pow
         votes=votes,
         actions=actions,
         analysis=analysis,
+        voting_patterns=voting_patterns,
     )
 
 
@@ -608,6 +698,7 @@ def _generate_power_analysis(
     sponsors: list[OfficialResponse],
     votes: VoteSummary | None,
     actions: list[ActionResponse],
+    voting_patterns: VotingPatterns | None = None,
 ) -> str:
     """Generate an AI power analysis for a bill."""
 
@@ -628,11 +719,26 @@ def _generate_power_analysis(
             for a in recent
         )
 
+    pattern_text = "No voting history on similar bills."
+    if voting_patterns and voting_patterns.patterns:
+        lines = []
+        for p in voting_patterns.patterns:
+            label = f"{p.name}: {p.alignment_pct}% alignment ({p.yea} yea, {p.nay} nay on {p.total} similar bills)"
+            if p.is_swing:
+                label += " — SWING VOTE"
+            lines.append(label)
+        pattern_text = (
+            f"Voting history on {voting_patterns.similar_bill_count} similar bills:\n"
+            + "\n".join(lines)
+        )
+        if voting_patterns.swing_voters:
+            pattern_text += f"\nSwing voters: {', '.join(voting_patterns.swing_voters)}"
+
     prompt = (
         "You are a political intelligence analyst for community organizers. "
         "Given the following data about a legislative bill, write a 2-4 sentence power analysis. "
-        "Focus on: who controls this bill's fate, any notable voting patterns, "
-        "and strategic observations an organizer should know. "
+        "Focus on: who controls this bill's fate, any notable voting patterns "
+        "(especially swing voters), and strategic observations an organizer should know. "
         "Be direct and actionable, not speculative.\n\n"
         f"Bill: {bill.title}\n"
         f"City: {bill.city_name}, {bill.state}\n"
@@ -640,7 +746,8 @@ def _generate_power_analysis(
         f"Committee/Body: {bill.body_name or 'Unknown'}\n"
         f"Sponsors: {sponsor_text}\n"
         f"Vote tally: {vote_text}\n"
-        f"Recent actions: {action_text}\n\n"
+        f"Recent actions: {action_text}\n"
+        f"Historical voting patterns: {pattern_text}\n\n"
         "Write ONLY the analysis paragraph, no headers or formatting."
     )
 
@@ -772,7 +879,7 @@ def get_bill_briefing(
     # Find similar bills via TF-IDF cosine similarity
     similar_bills = []
 
-    similar_ids_scores = find_similar_bills(bill.id, n=8)
+    similar_ids_scores = find_similar_bills(bill.id, n=_PATTERN_MAX_SIMILAR)
     if similar_ids_scores:
         # Filter to different cities only, keep top 5
         similar_bill_ids = [bid for bid, _ in similar_ids_scores]
@@ -826,7 +933,7 @@ def get_bill_briefing(
             })
 
     # Build power intelligence section
-    power = _build_power_section(db, bill, briefing)
+    power = _build_power_section(db, bill, briefing, similar_ids_scores or [])
 
     # Build narrative intelligence section
     narrative = _build_narrative_section(db, bill, briefing, news, power.actions if power else [])
@@ -930,17 +1037,15 @@ def list_cities() -> list[CityResponse]:
     ]
 
 
-_stats_cache: tuple[StatsResponse, float] | None = None
+_stats_cache: dict[str, tuple[StatsResponse, float]] = {}
 _STATS_CACHE_TTL = 300  # 5 minutes
 
 
 @router.get("/stats", response_model=StatsResponse)
 def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
-    
-    global _stats_cache
     now_ts = _time.time()
-    if _stats_cache and (now_ts - _stats_cache[1]) < _STATS_CACHE_TTL:
-        return _stats_cache[0]
+    if "__all__" in _stats_cache and (now_ts - _stats_cache["__all__"][1]) < _STATS_CACHE_TTL:
+        return _stats_cache["__all__"][0]
 
     now = datetime.now(tz=timezone.utc)
     week_from_now = now + timedelta(days=7)
@@ -1028,7 +1133,7 @@ def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
         by_status=by_status,
         by_city=by_city,
     )
-    _stats_cache = (result, _time.time())
+    _stats_cache["__all__"] = (result, _time.time())
     return result
 
 

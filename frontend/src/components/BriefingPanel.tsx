@@ -310,6 +310,47 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
                       </div>
                     )}
 
+                    {briefing.power!.voting_patterns && briefing.power!.voting_patterns.patterns.length > 0 && (
+                      <div className="mb-4">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          Voting History on Similar Bills
+                          <span className="font-[var(--font-mono)] ml-1">
+                            ({briefing.power!.voting_patterns.similar_bill_count} bills)
+                          </span>
+                        </span>
+                        <div className="mt-1.5 space-y-2">
+                          {briefing.power!.voting_patterns.patterns.map((p) => (
+                            <div key={p.official_id} className="flex items-center gap-2">
+                              <div className="w-24 truncate text-xs text-foreground font-medium flex items-center gap-1">
+                                {p.name}
+                                {p.is_swing && (
+                                  <span className="text-[10px] font-bold text-primary" title="Swing voter (30-70% alignment)">
+                                    SWING
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex-1 flex items-center gap-2">
+                                <div className="flex-1 h-2 rounded-full overflow-hidden bg-muted">
+                                  <div
+                                    className={p.is_swing ? "bg-amber-400 h-full" : p.alignment_pct >= 50 ? "bg-emerald-500 h-full" : "bg-red-500 h-full"}
+                                    style={{ width: `${p.alignment_pct}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs font-[var(--font-mono)] text-muted-foreground w-16 text-right">
+                                  {p.yea}/{p.total} yea
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {briefing.power!.voting_patterns.swing_voters.length > 0 && (
+                          <p className="text-xs text-primary font-medium mt-2">
+                            Swing vote{briefing.power!.voting_patterns.swing_voters.length > 1 ? "s" : ""}: {briefing.power!.voting_patterns.swing_voters.join(", ")}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     {briefing.power!.analysis && (
                       <div className="mt-3 p-3 rounded-md bg-primary/5 border border-primary/10">
                         <p className="text-sm text-foreground leading-relaxed">

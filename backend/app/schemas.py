@@ -252,11 +252,29 @@ class ActionResponse(BaseModel):
     seconder: str | None = None
 
 
+class OfficialVotingPattern(BaseModel):
+    official_id: int
+    name: str
+    district: str | None = None
+    alignment_pct: float
+    yea: int
+    nay: int
+    total: int
+    is_swing: bool = False
+
+
+class VotingPatterns(BaseModel):
+    patterns: list[OfficialVotingPattern] = []
+    similar_bill_count: int = 0
+    swing_voters: list[str] = []
+
+
 class PowerSection(BaseModel):
     sponsors: list[OfficialResponse] = []
     votes: VoteSummary | None = None
     actions: list[ActionResponse] = []
     analysis: str | None = None
+    voting_patterns: VotingPatterns | None = None
 
 
 # --- Coalition Intelligence schemas ---

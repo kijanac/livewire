@@ -202,11 +202,29 @@ export interface ActionInfo {
   seconder: string | null;
 }
 
+export interface OfficialVotingPattern {
+  official_id: number;
+  name: string;
+  district: string | null;
+  alignment_pct: number;
+  yea: number;
+  nay: number;
+  total: number;
+  is_swing: boolean;
+}
+
+export interface VotingPatterns {
+  patterns: OfficialVotingPattern[];
+  similar_bill_count: number;
+  swing_voters: string[];
+}
+
 export interface PowerSection {
   sponsors: OfficialInfo[];
   votes: VoteSummary | null;
   actions: ActionInfo[];
   analysis: string | null;
+  voting_patterns: VotingPatterns | null;
 }
 
 export interface NewsFrame {
