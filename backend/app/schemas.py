@@ -259,6 +259,42 @@ class PowerSection(BaseModel):
     analysis: str | None = None
 
 
+# --- Coalition Intelligence schemas ---
+
+
+class CityAlignment(BaseModel):
+    city: str
+    city_name: str
+    passed: int = 0
+    failed: int = 0
+    pending: int = 0
+    momentum: str = "stable"  # "advancing", "stalled", "stable"
+
+
+class TopicCoalition(BaseModel):
+    topic: str
+    topic_label: str
+    city_count: int
+    bill_count: int
+    total_passed: int
+    total_failed: int
+    total_pending: int
+    momentum: str = "stable"  # "advancing", "stalled", "mixed"
+    cities: list[CityAlignment] = []
+    insight: str | None = None
+
+
+class CoalitionsResponse(BaseModel):
+    topics: list[TopicCoalition]
+    total_topics: int
+
+
+class CoalitionBrief(BaseModel):
+    ally_cities: list[str] = []
+    contested_cities: list[str] = []
+    insight: str | None = None
+
+
 # --- Narrative Intelligence schemas ---
 
 
@@ -289,3 +325,4 @@ class BillBriefingResponse(BaseModel):
     collection_notes: list[dict] = []
     power: PowerSection | None = None
     narrative: NarrativeSection | None = None
+    coalition: CoalitionBrief | None = None

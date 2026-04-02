@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 const Dashboard = lazy(() => import("./components/Dashboard"));
 const CollectionView = lazy(() => import("./components/CollectionView"));
 const RadarView = lazy(() => import("./components/RadarView"));
+const CoalitionView = lazy(() => import("./components/CoalitionView"));
 
 type Route =
   | { page: "dashboard" }
   | { page: "collection"; slug: string }
-  | { page: "radar" };
+  | { page: "radar" }
+  | { page: "allies" };
 
 function useHashRoute(): Route {
   const [hash, setHash] = useState(window.location.hash);
@@ -22,6 +24,7 @@ function useHashRoute(): Route {
   const collectionMatch = hash.match(/^#\/collection\/(.+)$/);
   if (collectionMatch) return { page: "collection", slug: collectionMatch[1] };
   if (hash === "#/dashboard") return { page: "dashboard" };
+  if (hash === "#/allies") return { page: "allies" };
   return { page: "radar" };
 }
 
@@ -88,6 +91,16 @@ function App() {
                   }`}
                 >
                   Radar
+                </a>
+                <a
+                  href="#/allies"
+                  className={`px-3 py-1 text-sm font-semibold uppercase tracking-wide transition-colors ${
+                    route.page === "allies"
+                      ? "text-primary border-b-2 border-primary -mb-px"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Allies
                 </a>
                 <a
                   href="#/dashboard"
@@ -167,6 +180,8 @@ function App() {
       }>
         {route.page === "radar" ? (
           <RadarView />
+        ) : route.page === "allies" ? (
+          <CoalitionView />
         ) : route.page === "collection" ? (
           <CollectionView slug={route.slug} />
         ) : (

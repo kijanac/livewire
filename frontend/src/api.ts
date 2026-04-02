@@ -9,6 +9,7 @@ import type {
   Collection,
   CollectionItem,
   RadarResponse,
+  CoalitionsResponse,
 } from "./types";
 
 const BASE_URL = "";
@@ -92,6 +93,14 @@ export async function fetchRadar(topic?: string): Promise<RadarResponse> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch radar: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchCoalitions(): Promise<CoalitionsResponse> {
+  const response = await fetch(`${BASE_URL}/api/coalitions`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch coalitions: ${response.statusText}`);
   }
   return response.json();
 }

@@ -18,9 +18,12 @@ from app.schemas import (
     BillListResponse,
     BillResponse,
     CityActivity,
+    CityAlignment,
     CityCount,
     CityResponse,
     ClusterOutcomes,
+    CoalitionBrief,
+    CoalitionsResponse,
     IngestRequest,
     IngestResponse,
     NarrativeSection,
@@ -34,6 +37,7 @@ from app.schemas import (
     SimilarBill,
     StatsResponse,
     StatusCount,
+    TopicCoalition,
     TopicCount,
     VoteRecordResponse,
     VoteSummary,
@@ -331,6 +335,201 @@ def get_bill_radar(
     response = _build_radar(topic, min_cities, db)
     _radar_cache[cache_key] = (response, now)
     return response
+
+
+# --- Coalition Intelligence ---
+
+_coalitions_cache: tuple[CoalitionsResponse, float] | None = None
+_COALITIONS_CACHE_TTL = 600
+
+
+def _compute_city_momentum(passed: int, failed: int, pending: int) -> str:
+    total = passed + failed + pending
+    if total == 0:
+        return "stable"
+    pass_rate = passed / total
+    if pass_rate >= 0.5:
+        return "advancing"
+    if failed > passed and pending < total * 0.3:
+        return "stalled"
+    return "stable"
+
+
+def _build_coalitions(db: Session) -> CoalitionsResponse:
+    """Build cross-city coalition data grouped by topic."""
+    bills = db.query(
+        Bill.city, Bill.city_name, Bill.topics, Bill.status, Bill.passed_date,
+    ).filter(Bill.topics.isnot(None)).all()
+
+    # Aggregate: topic → city → outcome counts
+    from collections import defaultdict
+    topic_city: dict[str, dict[str, dict]] = defaultdict(
+        lambda: defaultdict(lambda: {"city": "", "city_name": "", "p": 0, "f": 0, "pe": 0})
+    )
+
+    for city, city_name, topics_json, status, passed_date in bills:
+        try:
+            topics_list = json.loads(topics_json)
+        except (ValueError, TypeError):
+            continue
+        outcome = _classify_outcome_from_fields(status, passed_date)
+        for t in topics_list:
+            entry = topic_city[t][city]
+            entry["city"] = city
+            entry["city_name"] = city_name
+            if outcome == "passed":
+                entry["p"] += 1
+            elif outcome == "failed":
+                entry["f"] += 1
+            else:
+                entry["pe"] += 1
+
+    # Build response
+    topic_coalitions = []
+    for topic, cities_data in topic_city.items():
+        city_alignments = []
+        total_p = total_f = total_pe = 0
+        for entry in cities_data.values():
+            p, f, pe = entry["p"], entry["f"], entry["pe"]
+            total_p += p
+            total_f += f
+            total_pe += pe
+            city_alignments.append(CityAlignment(
+                city=entry["city"],
+                city_name=entry["city_name"],
+                passed=p,
+                failed=f,
+                pending=pe,
+                momentum=_compute_city_momentum(p, f, pe),
+            ))
+        city_alignments.sort(key=lambda c: c.passed, reverse=True)
+
+        total_bills = total_p + total_f + total_pe
+        topic_momentum = _compute_city_momentum(total_p, total_f, total_pe)
+
+        topic_coalitions.append(TopicCoalition(
+            topic=topic,
+            topic_label=topic.replace("_", " ").title(),
+            city_count=len(city_alignments),
+            bill_count=total_bills,
+            total_passed=total_p,
+            total_failed=total_f,
+            total_pending=total_pe,
+            momentum=topic_momentum,
+            cities=city_alignments,
+        ))
+
+    topic_coalitions.sort(key=lambda t: t.city_count, reverse=True)
+
+    # Generate AI insights for top topics
+    if topic_coalitions and settings.OPENROUTER_API_KEY:
+        try:
+            top_topics = topic_coalitions[:10]
+            descriptions = []
+            for tc in top_topics:
+                advancing = [c.city_name for c in tc.cities if c.momentum == "advancing"][:5]
+                stalled = [c.city_name for c in tc.cities if c.momentum == "stalled"][:5]
+                descriptions.append(
+                    f"{tc.topic_label}: {tc.bill_count} bills across {tc.city_count} cities. "
+                    f"{tc.total_passed} passed, {tc.total_failed} failed, {tc.total_pending} pending. "
+                    f"Advancing in: {', '.join(advancing) or 'none'}. "
+                    f"Stalled in: {', '.join(stalled) or 'none'}."
+                )
+
+            prompt = (
+                "You are a coalition intelligence analyst for community organizers. "
+                "For each policy topic below, write a 1-2 sentence insight about the "
+                "cross-city landscape — who are natural allies, where is momentum, "
+                "and what should organizers know. Be direct and actionable.\n\n"
+                "Return JSON: {\"insights\": [\"insight for topic 1\", ...]}\n\n"
+                + "\n\n".join(descriptions)
+            )
+            raw = call_openrouter(prompt, temperature=0.2, json_mode=True)
+            parsed = json.loads(raw)
+            insights = parsed.get("insights", [])
+            for i, insight in enumerate(insights):
+                if i < len(top_topics):
+                    top_topics[i].insight = str(insight)
+        except Exception as exc:
+            logger.warning(
+                "Coalition insight generation failed",
+                extra={"event": "coalition_insight_failed", "error": str(exc)},
+            )
+
+    return CoalitionsResponse(
+        topics=topic_coalitions,
+        total_topics=len(topic_coalitions),
+    )
+
+
+def _classify_outcome_from_fields(status: str | None, passed_date: object) -> str:
+    """Classify outcome from raw status + passed_date fields (no Bill object needed)."""
+    if passed_date:
+        return "passed"
+    s = (status or "").strip().lower()
+    if s in _PASSED_STATUSES:
+        return "passed"
+    if s in _FAILED_STATUSES:
+        return "failed"
+    return "pending"
+
+
+@router.get("/coalitions", response_model=CoalitionsResponse)
+def get_coalitions(db: Session = Depends(get_db)) -> CoalitionsResponse:
+    global _coalitions_cache
+    now = _time.time()
+    if _coalitions_cache:
+        cached_response, cached_at = _coalitions_cache
+        if (now - cached_at) < _COALITIONS_CACHE_TTL:
+            return cached_response
+
+    response = _build_coalitions(db)
+    _coalitions_cache = (response, now)
+    return response
+
+
+def _build_coalition_brief(
+    bill: Bill, similar_bills: list[SimilarBill],
+) -> CoalitionBrief | None:
+    """Build coalition context for a bill based on similar bills in other cities."""
+    if not similar_bills:
+        return None
+
+    ally_cities = [sb.city_name for sb in similar_bills if sb.status and sb.status.strip().lower() in _PASSED_STATUSES]
+    contested_cities = [sb.city_name for sb in similar_bills if sb.status and sb.status.strip().lower() not in _PASSED_STATUSES and sb.status.strip().lower() not in _FAILED_STATUSES]
+
+    insight = None
+    if settings.OPENROUTER_API_KEY and similar_bills:
+        try:
+            sim_text = "\n".join(
+                f"- {sb.city_name}, {sb.state}: \"{sb.title}\" — Status: {sb.status or 'unknown'}"
+                for sb in similar_bills
+            )
+            prompt = (
+                "You are a coalition analyst for community organizers. "
+                "A city council bill has similar legislation in other cities.\n\n"
+                f"Bill: {bill.title}\n"
+                f"City: {bill.city_name}, {bill.state}\n\n"
+                f"Similar bills in other cities:\n{sim_text}\n\n"
+                "Write 1-2 sentences of actionable coalition advice: "
+                "who should they connect with, what can they learn from cities that "
+                "passed or failed similar bills. Be specific and direct."
+            )
+            insight = call_openrouter(prompt, max_tokens=200).strip()
+        except Exception as exc:
+            logger.warning(
+                "Coalition brief generation failed",
+                extra={"event": "coalition_brief_failed", "bill_id": bill.id, "error": str(exc)},
+            )
+
+    if not ally_cities and not contested_cities and not insight:
+        return None
+
+    return CoalitionBrief(
+        ally_cities=ally_cities,
+        contested_cities=contested_cities,
+        insight=insight,
+    )
 
 
 def _build_power_section(db: Session, bill: Bill, briefing: BillBriefing) -> PowerSection:
@@ -632,6 +831,9 @@ def get_bill_briefing(
     # Build narrative intelligence section
     narrative = _build_narrative_section(db, bill, briefing, news, power.actions if power else [])
 
+    # Build coalition intelligence brief
+    coalition = _build_coalition_brief(bill, similar_bills)
+
     return BillBriefingResponse(
         bill=bill_to_response(bill),
         summary=briefing.summary,
@@ -644,6 +846,7 @@ def get_bill_briefing(
         collection_notes=collection_notes,
         power=power,
         narrative=narrative,
+        coalition=coalition,
     )
 
 

@@ -224,6 +224,39 @@ export interface NarrativeSection {
   talking_points: string[];
 }
 
+export interface CityAlignment {
+  city: string;
+  city_name: string;
+  passed: number;
+  failed: number;
+  pending: number;
+  momentum: "advancing" | "stalled" | "stable";
+}
+
+export interface TopicCoalition {
+  topic: string;
+  topic_label: string;
+  city_count: number;
+  bill_count: number;
+  total_passed: number;
+  total_failed: number;
+  total_pending: number;
+  momentum: "advancing" | "stalled" | "mixed" | "stable";
+  cities: CityAlignment[];
+  insight: string | null;
+}
+
+export interface CoalitionsResponse {
+  topics: TopicCoalition[];
+  total_topics: number;
+}
+
+export interface CoalitionBrief {
+  ally_cities: string[];
+  contested_cities: string[];
+  insight: string | null;
+}
+
 export interface BillBriefing {
   bill: Bill;
   summary: string | null;
@@ -236,4 +269,5 @@ export interface BillBriefing {
   collection_notes: { collection_name: string; note: string }[];
   power: PowerSection | null;
   narrative: NarrativeSection | null;
+  coalition: CoalitionBrief | null;
 }
