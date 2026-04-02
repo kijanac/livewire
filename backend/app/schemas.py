@@ -201,6 +201,51 @@ class RadarResponse(BaseModel):
     total_bills: int
 
 
+# --- Power Intelligence schemas ---
+
+
+class OfficialResponse(BaseModel):
+    id: int
+    name: str
+    title: str | None = None
+    district: str | None = None
+    party: str | None = None
+    body_name: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class VoteRecordResponse(BaseModel):
+    official: str
+    vote: str
+    district: str | None = None
+
+
+class VoteSummary(BaseModel):
+    yea: int = 0
+    nay: int = 0
+    abstain: int = 0
+    absent: int = 0
+    other: int = 0
+    records: list[VoteRecordResponse] = []
+
+
+class ActionResponse(BaseModel):
+    date: str | None = None
+    action: str | None = None
+    body: str | None = None
+    result: str | None = None
+    mover: str | None = None
+    seconder: str | None = None
+
+
+class PowerSection(BaseModel):
+    sponsors: list[OfficialResponse] = []
+    votes: VoteSummary | None = None
+    actions: list[ActionResponse] = []
+    analysis: str | None = None
+
+
 class BillBriefingResponse(BaseModel):
     bill: BillResponse
     summary: str | None = None
@@ -211,3 +256,4 @@ class BillBriefingResponse(BaseModel):
     similar_bills: list[SimilarBill] = []
     timeline: list[dict] = []
     collection_notes: list[dict] = []
+    power: PowerSection | None = None

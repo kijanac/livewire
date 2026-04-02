@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import SessionLocal, get_db
 from app.ingesters.legistar import LegistarIngester
-from app.models import Bill, BillBriefing, CollectionItem
+from app.models import Bill, BillAction, BillBriefing, CollectionItem, Official, VoteRecord, bill_sponsors
 from app.schemas import (
+    ActionResponse,
     BillBriefingResponse,
     BillListResponse,
     BillResponse,
@@ -19,6 +20,8 @@ from app.schemas import (
     IngestRequest,
     IngestResponse,
     NewsArticle,
+    OfficialResponse,
+    PowerSection,
     RadarBill,
     RadarCluster,
     RadarResponse,
@@ -26,6 +29,8 @@ from app.schemas import (
     StatsResponse,
     StatusCount,
     TopicCount,
+    VoteRecordResponse,
+    VoteSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -236,6 +241,162 @@ def get_bill_radar(
     return response
 
 
+def _build_power_section(db: Session, bill: Bill, briefing: BillBriefing) -> PowerSection:
+    """Build the power intelligence section for a bill."""
+    from app.ingesters.legistar import LegistarIngester
+    from app.config import settings as _settings
+
+    # On-demand enrichment: fetch sponsors/votes/actions from Legistar if not yet stored
+    city_config = _settings.CITIES.get(bill.city)
+    if city_config:
+        ingester = LegistarIngester(
+            city_key=bill.city,
+            city_config=city_config,
+            base_url=_settings.LEGISTAR_BASE_URL,
+        )
+        ingester.enrich_bill(db, bill)
+
+    # Sponsors
+    sponsor_rows = (
+        db.query(Official)
+        .join(bill_sponsors, bill_sponsors.c.official_id == Official.id)
+        .filter(bill_sponsors.c.bill_id == bill.id)
+        .all()
+    )
+    sponsors = [OfficialResponse.model_validate(o) for o in sponsor_rows]
+
+    # Votes
+    vote_records = (
+        db.query(VoteRecord)
+        .filter(VoteRecord.bill_id == bill.id)
+        .all()
+    )
+    votes = None
+    if vote_records:
+        yea = nay = abstain = absent = other = 0
+        records = []
+        for vr in vote_records:
+            val = (vr.vote_value or "").strip().lower()
+            if val in ("yea", "aye", "affirmative", "yes"):
+                yea += 1
+            elif val in ("nay", "no", "negative"):
+                nay += 1
+            elif val in ("abstain", "recused", "present"):
+                abstain += 1
+            elif val in ("absent", "excused"):
+                absent += 1
+            else:
+                other += 1
+            records.append(VoteRecordResponse(
+                official=vr.official.name if vr.official else "Unknown",
+                vote=vr.vote_value or "",
+                district=vr.official.district if vr.official else None,
+            ))
+        votes = VoteSummary(
+            yea=yea, nay=nay, abstain=abstain, absent=absent, other=other,
+            records=records,
+        )
+
+    # Actions
+    action_rows = (
+        db.query(BillAction)
+        .filter(BillAction.bill_id == bill.id)
+        .order_by(BillAction.action_date.asc())
+        .all()
+    )
+    actions = [
+        ActionResponse(
+            date=a.action_date.isoformat() if a.action_date else None,
+            action=a.action_text,
+            body=a.body_name,
+            result=a.result,
+            mover=a.mover.name if a.mover else None,
+            seconder=a.seconder.name if a.seconder else None,
+        )
+        for a in action_rows
+    ]
+
+    # AI power analysis (cached on the briefing)
+    analysis = briefing.power_analysis
+    if not analysis and (sponsors or vote_records or action_rows) and _settings.OPENROUTER_API_KEY:
+        analysis = _generate_power_analysis(bill, sponsors, votes, actions)
+        briefing.power_analysis = analysis
+        db.commit()
+
+    return PowerSection(
+        sponsors=sponsors,
+        votes=votes,
+        actions=actions,
+        analysis=analysis,
+    )
+
+
+def _generate_power_analysis(
+    bill: Bill,
+    sponsors: list[OfficialResponse],
+    votes: VoteSummary | None,
+    actions: list[ActionResponse],
+) -> str:
+    """Generate an AI power analysis for a bill."""
+    from app.config import settings as _settings
+    import httpx
+
+    sponsor_text = ", ".join(s.name for s in sponsors) if sponsors else "No sponsors listed"
+    vote_text = "No votes recorded"
+    if votes:
+        vote_text = f"Yea: {votes.yea}, Nay: {votes.nay}, Abstain: {votes.abstain}, Absent: {votes.absent}"
+        if votes.records:
+            nay_names = [r.official for r in votes.records if r.vote.lower() in ("nay", "no", "negative")]
+            if nay_names:
+                vote_text += f". Voted no: {', '.join(nay_names)}"
+
+    action_text = "No action history"
+    if actions:
+        recent = actions[-5:]
+        action_text = "; ".join(
+            f"{a.date or '?'}: {a.action or '?'} ({a.body or '?'})" + (f" — {a.result}" if a.result else "")
+            for a in recent
+        )
+
+    prompt = (
+        "You are a political intelligence analyst for community organizers. "
+        "Given the following data about a legislative bill, write a 2-4 sentence power analysis. "
+        "Focus on: who controls this bill's fate, any notable voting patterns, "
+        "and strategic observations an organizer should know. "
+        "Be direct and actionable, not speculative.\n\n"
+        f"Bill: {bill.title}\n"
+        f"City: {bill.city_name}, {bill.state}\n"
+        f"Status: {bill.status or 'Unknown'}\n"
+        f"Committee/Body: {bill.body_name or 'Unknown'}\n"
+        f"Sponsors: {sponsor_text}\n"
+        f"Vote tally: {vote_text}\n"
+        f"Recent actions: {action_text}\n\n"
+        "Write ONLY the analysis paragraph, no headers or formatting."
+    )
+
+    try:
+        payload = {
+            "model": _settings.OPENROUTER_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 300,
+        }
+        headers = {
+            "Authorization": f"Bearer {_settings.OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(_settings.OPENROUTER_BASE_URL, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"].strip()
+    except Exception as exc:
+        logger.error(
+            "Power analysis generation failed",
+            extra={"event": "power_analysis_failed", "bill_id": bill.id, "error": str(exc)},
+        )
+        return ""
+
+
 @router.get("/bills/{bill_id}/briefing", response_model=BillBriefingResponse)
 def get_bill_briefing(
     bill_id: int,
@@ -316,6 +477,9 @@ def get_bill_briefing(
                 "note": item.note,
             })
 
+    # Build power intelligence section
+    power = _build_power_section(db, bill, briefing)
+
     return BillBriefingResponse(
         bill=bill_to_response(bill),
         summary=briefing.summary,
@@ -326,6 +490,7 @@ def get_bill_briefing(
         similar_bills=similar_bills,
         timeline=timeline,
         collection_notes=collection_notes,
+        power=power,
     )
 
 

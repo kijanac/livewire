@@ -173,10 +173,163 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
                 </>
               )}
 
+              {/* Power Intelligence */}
+              {briefing.power && (briefing.power.sponsors.length > 0 || briefing.power.votes || briefing.power.actions.length > 0) && (
+                <>
+                  <div className="animate-fade-up p-4 sm:p-6" style={{ animationDelay: "200ms" }}>
+                    <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
+                      Power Map
+                    </h4>
+
+                    {/* Sponsors */}
+                    {briefing.power.sponsors.length > 0 && (
+                      <div className="mb-4">
+                        <span className="text-xs font-medium text-muted-foreground">Sponsors</span>
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                          {briefing.power.sponsors.map((s) => (
+                            <span
+                              key={s.id}
+                              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-primary/10 text-primary font-medium"
+                            >
+                              {s.name}
+                              {s.district && (
+                                <span className="text-primary/60">D{s.district}</span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Vote Breakdown */}
+                    {briefing.power.votes && (briefing.power.votes.yea + briefing.power.votes.nay + briefing.power.votes.abstain + briefing.power.votes.absent) > 0 && (
+                      <div className="mb-4">
+                        <span className="text-xs font-medium text-muted-foreground">Vote Breakdown</span>
+                        <div className="mt-1.5">
+                          {/* Vote bar */}
+                          <div className="flex h-3 rounded-full overflow-hidden bg-muted">
+                            {briefing.power.votes.yea > 0 && (
+                              <div
+                                className="bg-emerald-500"
+                                style={{ width: `${(briefing.power.votes.yea / (briefing.power.votes.yea + briefing.power.votes.nay + briefing.power.votes.abstain + briefing.power.votes.absent + briefing.power.votes.other)) * 100}%` }}
+                                title={`Yea: ${briefing.power.votes.yea}`}
+                              />
+                            )}
+                            {briefing.power.votes.nay > 0 && (
+                              <div
+                                className="bg-red-500"
+                                style={{ width: `${(briefing.power.votes.nay / (briefing.power.votes.yea + briefing.power.votes.nay + briefing.power.votes.abstain + briefing.power.votes.absent + briefing.power.votes.other)) * 100}%` }}
+                                title={`Nay: ${briefing.power.votes.nay}`}
+                              />
+                            )}
+                            {(briefing.power.votes.abstain + briefing.power.votes.absent + briefing.power.votes.other) > 0 && (
+                              <div
+                                className="bg-muted-foreground/30"
+                                style={{ width: `${((briefing.power.votes.abstain + briefing.power.votes.absent + briefing.power.votes.other) / (briefing.power.votes.yea + briefing.power.votes.nay + briefing.power.votes.abstain + briefing.power.votes.absent + briefing.power.votes.other)) * 100}%` }}
+                                title={`Other: ${briefing.power.votes.abstain + briefing.power.votes.absent + briefing.power.votes.other}`}
+                              />
+                            )}
+                          </div>
+                          {/* Vote legend */}
+                          <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                            {briefing.power.votes.yea > 0 && (
+                              <span className="flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                                Yea {briefing.power.votes.yea}
+                              </span>
+                            )}
+                            {briefing.power.votes.nay > 0 && (
+                              <span className="flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-red-500" />
+                                Nay {briefing.power.votes.nay}
+                              </span>
+                            )}
+                            {briefing.power.votes.abstain > 0 && (
+                              <span className="flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-muted-foreground/30" />
+                                Abstain {briefing.power.votes.abstain}
+                              </span>
+                            )}
+                            {briefing.power.votes.absent > 0 && (
+                              <span className="flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-muted-foreground/30" />
+                                Absent {briefing.power.votes.absent}
+                              </span>
+                            )}
+                          </div>
+                          {/* Individual votes (expandable) */}
+                          {briefing.power.votes.records.length > 0 && (
+                            <details className="mt-2">
+                              <summary className="text-xs text-primary cursor-pointer hover:text-primary/80">
+                                Show individual votes ({briefing.power.votes.records.length})
+                              </summary>
+                              <div className="mt-1.5 grid grid-cols-2 gap-1">
+                                {briefing.power.votes.records.map((r, i) => (
+                                  <div key={i} className="flex items-center gap-1.5 text-xs">
+                                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                      r.vote.toLowerCase().match(/^(yea|aye|yes|affirmative)$/) ? "bg-emerald-500" :
+                                      r.vote.toLowerCase().match(/^(nay|no|negative)$/) ? "bg-red-500" :
+                                      "bg-muted-foreground/30"
+                                    }`} />
+                                    <span className="text-foreground truncate">{r.official}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action History */}
+                    {briefing.power.actions.length > 0 && (
+                      <div className="mb-4">
+                        <span className="text-xs font-medium text-muted-foreground">Action History</span>
+                        <div className="mt-1.5 space-y-1.5">
+                          {briefing.power.actions.slice(-8).map((a, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 mt-1.5 flex-shrink-0" />
+                              <div className="min-w-0">
+                                <span className="text-xs text-foreground">{a.action || "Action"}</span>
+                                <div className="flex items-center gap-2">
+                                  {a.date && (
+                                    <span className="text-xs font-[var(--font-mono)] text-muted-foreground">
+                                      {formatDate(a.date)}
+                                    </span>
+                                  )}
+                                  {a.body && (
+                                    <span className="text-xs text-muted-foreground">{a.body}</span>
+                                  )}
+                                  {a.result && (
+                                    <Badge variant="secondary" className="text-[10px] px-1 py-0">
+                                      {a.result}
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* AI Power Analysis */}
+                    {briefing.power.analysis && (
+                      <div className="mt-3 p-3 rounded-md bg-primary/5 border border-primary/10">
+                        <p className="text-sm text-foreground leading-relaxed">
+                          {briefing.power.analysis}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  <Separator />
+                </>
+              )}
+
               {/* Organizing Activity */}
               {briefing.organizing && (
                 <>
-                  <div className="animate-fade-up p-4 sm:p-6 bg-accent/10 border-l-4 border-accent" style={{ animationDelay: "225ms" }}>
+                  <div className="animate-fade-up p-4 sm:p-6 bg-accent/10 border-l-4 border-accent" style={{ animationDelay: "275ms" }}>
                     <h4 className="text-xs font-bold text-foreground uppercase tracking-wider mb-2">
                       Organizing Activity
                     </h4>
@@ -191,7 +344,7 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
               {/* Public Reception */}
               {briefing.reception && (
                 <>
-                  <div className="animate-fade-up p-4 sm:p-6" style={{ animationDelay: "300ms" }}>
+                  <div className="animate-fade-up p-4 sm:p-6" style={{ animationDelay: "350ms" }}>
                     <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">
                       Public Reception
                     </h4>

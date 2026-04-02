@@ -5,7 +5,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.ingesters.base import BaseIngester
-from app.models import Bill
+from app.models import Bill, BillAction, Official, VoteRecord, bill_sponsors
 
 logger = logging.getLogger(__name__)
 
@@ -157,3 +157,260 @@ class LegistarIngester(BaseIngester):
         )
 
         return added, updated
+
+    def ingest_officials(self, session: Session) -> int:
+        """Fetch persons (officials) from Legistar and upsert. Returns count of officials synced."""
+        url = f"{self.base_url}/{self.city_key}/persons"
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                persons = response.json()
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            logger.warning(
+                "Failed to fetch officials",
+                extra={"event": "officials_fetch_failed", "city": self.city_key, "error": str(exc)},
+            )
+            return 0
+
+        if not isinstance(persons, list):
+            return 0
+
+        count = 0
+        for person in persons:
+            source_id = str(person.get("PersonId", ""))
+            name = person.get("PersonFullName", "")
+            if not source_id or not name:
+                continue
+
+            existing = (
+                session.query(Official)
+                .filter_by(source_id=source_id, city=self.city_key)
+                .first()
+            )
+
+            data = {
+                "source_id": source_id,
+                "city": self.city_key,
+                "city_name": self.city_name,
+                "state": self.state,
+                "name": name,
+                "title": person.get("PersonTitle"),
+                "district": person.get("PersonWard"),
+                "party": person.get("PersonParty"),
+                "body_name": person.get("PersonActiveFlag"),
+                "email": person.get("PersonEmail"),
+                "website": person.get("PersonWWW"),
+                "active": bool(person.get("PersonActiveFlag", 1)),
+                "updated_at": _parse_datetime(person.get("PersonLastModifiedUtc")),
+            }
+
+            if existing:
+                for key, value in data.items():
+                    setattr(existing, key, value)
+            else:
+                session.add(Official(**data))
+            count += 1
+
+        session.commit()
+        logger.info(
+            "Officials ingestion completed",
+            extra={"event": "officials_ingestion_completed", "city": self.city_key, "count": count},
+        )
+        return count
+
+    def enrich_bill(self, session: Session, bill: Bill) -> dict:
+        """On-demand: fetch sponsors, votes, and actions for a single bill.
+
+        Returns dict with keys: sponsors, votes, actions (counts of records stored).
+        """
+        source_id = bill.source_id
+        result = {"sponsors": 0, "votes": 0, "actions": 0}
+
+        # Skip if already enriched (has any actions)
+        existing_actions = session.query(BillAction).filter_by(bill_id=bill.id).first()
+        if existing_actions:
+            return result
+
+        with httpx.Client(timeout=30.0) as client:
+            # Sponsors
+            result["sponsors"] = self._fetch_sponsors(client, session, bill, source_id)
+            # Actions (includes vote events)
+            result["actions"] = self._fetch_actions(client, session, bill, source_id)
+            # Votes (individual roll call records)
+            result["votes"] = self._fetch_votes(client, session, bill, source_id)
+
+        session.commit()
+        logger.info(
+            "Bill enrichment completed",
+            extra={
+                "event": "bill_enrichment_completed",
+                "bill_id": bill.id,
+                "city": self.city_key,
+                **result,
+            },
+        )
+        return result
+
+    def _fetch_sponsors(
+        self, client: httpx.Client, session: Session, bill: Bill, source_id: str
+    ) -> int:
+        url = f"{self.base_url}/{self.city_key}/matters/{source_id}/sponsors"
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            sponsors = response.json()
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            return 0
+
+        if not isinstance(sponsors, list):
+            return 0
+
+        count = 0
+        for sponsor in sponsors:
+            person_id = str(sponsor.get("MatterSponsorNameId", ""))
+            if not person_id:
+                continue
+
+            official = (
+                session.query(Official)
+                .filter_by(source_id=person_id, city=self.city_key)
+                .first()
+            )
+            if not official:
+                # Create a stub official from the sponsor data
+                name = sponsor.get("MatterSponsorName", "Unknown")
+                official = Official(
+                    source_id=person_id,
+                    city=self.city_key,
+                    city_name=bill.city_name,
+                    state=bill.state,
+                    name=name,
+                )
+                session.add(official)
+                session.flush()
+
+            # Insert into association table if not already present
+            exists = session.execute(
+                bill_sponsors.select().where(
+                    bill_sponsors.c.bill_id == bill.id,
+                    bill_sponsors.c.official_id == official.id,
+                )
+            ).first()
+            if not exists:
+                session.execute(
+                    bill_sponsors.insert().values(bill_id=bill.id, official_id=official.id)
+                )
+                count += 1
+
+        return count
+
+    def _fetch_actions(
+        self, client: httpx.Client, session: Session, bill: Bill, source_id: str
+    ) -> int:
+        url = f"{self.base_url}/{self.city_key}/matters/{source_id}/histories"
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            actions = response.json()
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            return 0
+
+        if not isinstance(actions, list):
+            return 0
+
+        count = 0
+        for action in actions:
+            action_text = action.get("MatterHistoryActionName", "")
+            action_date = _parse_datetime(action.get("MatterHistoryActionDate"))
+            body_name = action.get("MatterHistoryActionBodyName")
+            result = action.get("MatterHistoryPassedFlagName")
+
+            # Resolve mover/seconder if available
+            mover_id = None
+            seconder_id = None
+            mover_person_id = str(action.get("MatterHistoryMoverId") or "")
+            seconder_person_id = str(action.get("MatterHistorySeconderId") or "")
+
+            if mover_person_id and mover_person_id != "0":
+                mover = session.query(Official).filter_by(
+                    source_id=mover_person_id, city=self.city_key
+                ).first()
+                if mover:
+                    mover_id = mover.id
+
+            if seconder_person_id and seconder_person_id != "0":
+                seconder = session.query(Official).filter_by(
+                    source_id=seconder_person_id, city=self.city_key
+                ).first()
+                if seconder:
+                    seconder_id = seconder.id
+
+            session.add(BillAction(
+                bill_id=bill.id,
+                action_date=action_date,
+                action_text=action_text,
+                body_name=body_name,
+                result=result,
+                mover_id=mover_id,
+                seconder_id=seconder_id,
+            ))
+            count += 1
+
+        return count
+
+    def _fetch_votes(
+        self, client: httpx.Client, session: Session, bill: Bill, source_id: str
+    ) -> int:
+        url = f"{self.base_url}/{self.city_key}/matters/{source_id}/votes"
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            votes = response.json()
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            return 0
+
+        if not isinstance(votes, list):
+            return 0
+
+        count = 0
+        for vote in votes:
+            person_id = str(vote.get("VotePersonId", ""))
+            if not person_id:
+                continue
+
+            official = (
+                session.query(Official)
+                .filter_by(source_id=person_id, city=self.city_key)
+                .first()
+            )
+            if not official:
+                name = vote.get("VotePersonName", "Unknown")
+                official = Official(
+                    source_id=person_id,
+                    city=self.city_key,
+                    city_name=bill.city_name,
+                    state=bill.state,
+                    name=name,
+                )
+                session.add(official)
+                session.flush()
+
+            vote_value = str(vote.get("VoteValueId", ""))
+            vote_name = vote.get("VoteValueName", "")
+            # Normalize vote values
+            if vote_name:
+                vote_value = vote_name
+
+            vote_date = _parse_datetime(vote.get("VoteLastModifiedUtc"))
+
+            session.add(VoteRecord(
+                bill_id=bill.id,
+                official_id=official.id,
+                vote_value=vote_value,
+                vote_date=vote_date,
+                action_text=vote.get("VoteEventItemActionName"),
+            ))
+            count += 1
+
+        return count

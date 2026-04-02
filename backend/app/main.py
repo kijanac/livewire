@@ -58,6 +58,33 @@ def run_ingestion_all_cities() -> None:
         finally:
             session.close()
 
+    # Ingest officials for all cities
+    for city_key, city_config in settings.CITIES.items():
+        ingester = LegistarIngester(
+            city_key=city_key,
+            city_config=city_config,
+            base_url=settings.LEGISTAR_BASE_URL,
+        )
+        session = SessionLocal()
+        try:
+            count = ingester.ingest_officials(session)
+            if count:
+                logger.info(
+                    "Officials ingested for city",
+                    extra={
+                        "event": "officials_ingested",
+                        "city": city_key,
+                        "count": count,
+                    },
+                )
+        except Exception:
+            logger.exception(
+                "Officials ingestion failed for city",
+                extra={"event": "officials_ingestion_failed", "city": city_key},
+            )
+        finally:
+            session.close()
+
     logger.info(
         "Scheduled ingestion finished for all cities",
         extra={"event": "scheduled_ingestion_finished"},

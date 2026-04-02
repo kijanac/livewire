@@ -156,6 +156,46 @@ export interface RadarResponse {
   total_bills: number;
 }
 
+export interface OfficialInfo {
+  id: number;
+  name: string;
+  title: string | null;
+  district: string | null;
+  party: string | null;
+  body_name: string | null;
+}
+
+export interface VoteRecordInfo {
+  official: string;
+  vote: string;
+  district: string | null;
+}
+
+export interface VoteSummary {
+  yea: number;
+  nay: number;
+  abstain: number;
+  absent: number;
+  other: number;
+  records: VoteRecordInfo[];
+}
+
+export interface ActionInfo {
+  date: string | null;
+  action: string | null;
+  body: string | null;
+  result: string | null;
+  mover: string | null;
+  seconder: string | null;
+}
+
+export interface PowerSection {
+  sponsors: OfficialInfo[];
+  votes: VoteSummary | null;
+  actions: ActionInfo[];
+  analysis: string | null;
+}
+
 export interface BillBriefing {
   bill: Bill;
   summary: string | null;
@@ -166,4 +206,5 @@ export interface BillBriefing {
   similar_bills: SimilarBill[];
   timeline: { event: string; date: string }[];
   collection_notes: { collection_name: string; note: string }[];
+  power: PowerSection | null;
 }
