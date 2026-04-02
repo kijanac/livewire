@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+from sqlalchemy.orm import selectinload
+
 from app.config import settings
 from app.database import SessionLocal, get_db
 from app.ingesters.legistar import LegistarIngester
@@ -243,20 +245,15 @@ def get_bill_radar(
 
 def _build_power_section(db: Session, bill: Bill, briefing: BillBriefing) -> PowerSection:
     """Build the power intelligence section for a bill."""
-    from app.ingesters.legistar import LegistarIngester
-    from app.config import settings as _settings
-
-    # On-demand enrichment: fetch sponsors/votes/actions from Legistar if not yet stored
-    city_config = _settings.CITIES.get(bill.city)
-    if city_config:
+    city_config = settings.CITIES.get(bill.city)
+    if city_config and not bill.enriched_at:
         ingester = LegistarIngester(
             city_key=bill.city,
             city_config=city_config,
-            base_url=_settings.LEGISTAR_BASE_URL,
+            base_url=settings.LEGISTAR_BASE_URL,
         )
         ingester.enrich_bill(db, bill)
 
-    # Sponsors
     sponsor_rows = (
         db.query(Official)
         .join(bill_sponsors, bill_sponsors.c.official_id == Official.id)
@@ -265,41 +262,28 @@ def _build_power_section(db: Session, bill: Bill, briefing: BillBriefing) -> Pow
     )
     sponsors = [OfficialResponse.model_validate(o) for o in sponsor_rows]
 
-    # Votes
     vote_records = (
         db.query(VoteRecord)
+        .options(selectinload(VoteRecord.official))
         .filter(VoteRecord.bill_id == bill.id)
         .all()
     )
     votes = None
     if vote_records:
-        yea = nay = abstain = absent = other = 0
+        counts = {"yea": 0, "nay": 0, "abstain": 0, "absent": 0, "other": 0}
         records = []
         for vr in vote_records:
-            val = (vr.vote_value or "").strip().lower()
-            if val in ("yea", "aye", "affirmative", "yes"):
-                yea += 1
-            elif val in ("nay", "no", "negative"):
-                nay += 1
-            elif val in ("abstain", "recused", "present"):
-                abstain += 1
-            elif val in ("absent", "excused"):
-                absent += 1
-            else:
-                other += 1
+            counts[vr.vote_value] = counts.get(vr.vote_value, 0) + 1
             records.append(VoteRecordResponse(
                 official=vr.official.name if vr.official else "Unknown",
                 vote=vr.vote_value or "",
                 district=vr.official.district if vr.official else None,
             ))
-        votes = VoteSummary(
-            yea=yea, nay=nay, abstain=abstain, absent=absent, other=other,
-            records=records,
-        )
+        votes = VoteSummary(**counts, records=records)
 
-    # Actions
     action_rows = (
         db.query(BillAction)
+        .options(selectinload(BillAction.mover), selectinload(BillAction.seconder))
         .filter(BillAction.bill_id == bill.id)
         .order_by(BillAction.action_date.asc())
         .all()
@@ -316,9 +300,8 @@ def _build_power_section(db: Session, bill: Bill, briefing: BillBriefing) -> Pow
         for a in action_rows
     ]
 
-    # AI power analysis (cached on the briefing)
     analysis = briefing.power_analysis
-    if not analysis and (sponsors or vote_records or action_rows) and _settings.OPENROUTER_API_KEY:
+    if not analysis and (sponsors or vote_records or action_rows) and settings.OPENROUTER_API_KEY:
         analysis = _generate_power_analysis(bill, sponsors, votes, actions)
         briefing.power_analysis = analysis
         db.commit()
@@ -338,15 +321,14 @@ def _generate_power_analysis(
     actions: list[ActionResponse],
 ) -> str:
     """Generate an AI power analysis for a bill."""
-    from app.config import settings as _settings
-    import httpx
+    from app.briefing import call_openrouter
 
     sponsor_text = ", ".join(s.name for s in sponsors) if sponsors else "No sponsors listed"
     vote_text = "No votes recorded"
     if votes:
         vote_text = f"Yea: {votes.yea}, Nay: {votes.nay}, Abstain: {votes.abstain}, Absent: {votes.absent}"
         if votes.records:
-            nay_names = [r.official for r in votes.records if r.vote.lower() in ("nay", "no", "negative")]
+            nay_names = [r.official for r in votes.records if r.vote == "nay"]
             if nay_names:
                 vote_text += f". Voted no: {', '.join(nay_names)}"
 
@@ -375,20 +357,7 @@ def _generate_power_analysis(
     )
 
     try:
-        payload = {
-            "model": _settings.OPENROUTER_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-            "max_tokens": 300,
-        }
-        headers = {
-            "Authorization": f"Bearer {_settings.OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(_settings.OPENROUTER_BASE_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
+        return call_openrouter(prompt, max_tokens=300).strip()
     except Exception as exc:
         logger.error(
             "Power analysis generation failed",
@@ -574,9 +543,18 @@ def list_cities() -> list[CityResponse]:
     ]
 
 
+_stats_cache: tuple[StatsResponse, float] | None = None
+_STATS_CACHE_TTL = 300  # 5 minutes
+
+
 @router.get("/stats", response_model=StatsResponse)
 def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
     import json as _json
+
+    global _stats_cache
+    now_ts = _time.time()
+    if _stats_cache and (now_ts - _stats_cache[1]) < _STATS_CACHE_TTL:
+        return _stats_cache[0]
 
     now = datetime.now(tz=timezone.utc)
     week_from_now = now + timedelta(days=7)
@@ -656,7 +634,7 @@ def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
         CityCount(city=row[0], city_name=row[1], count=row[2]) for row in city_rows
     ]
 
-    return StatsResponse(
+    result = StatsResponse(
         moving_this_week=moving_this_week,
         hot_topics=hot_topics,
         most_active_city=most_active_city,
@@ -664,6 +642,8 @@ def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
         by_status=by_status,
         by_city=by_city,
     )
+    _stats_cache = (result, _time.time())
+    return result
 
 
 @router.post("/ingest", response_model=IngestResponse)

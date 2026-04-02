@@ -36,6 +36,8 @@ def init_db() -> None:
     with engine.begin() as conn:
         if "topics" not in existing_bill_cols:
             conn.execute(text("ALTER TABLE bills ADD COLUMN topics TEXT"))
+        if "enriched_at" not in existing_bill_cols:
+            conn.execute(text("ALTER TABLE bills ADD COLUMN enriched_at DATETIME"))
 
     if "bill_briefings" in inspector.get_table_names():
         existing_briefing_cols = {col["name"] for col in inspector.get_columns("bill_briefings")}

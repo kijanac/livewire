@@ -13,6 +13,10 @@ import type {
 
 const BASE_URL = "";
 
+// Cache for static data that rarely changes
+let _citiesCache: City[] | null = null;
+let _topicsCache: string[] | null = null;
+
 interface FetchBillsParams extends Partial<BillFilters> {
   page?: number;
   per_page?: number;
@@ -43,11 +47,13 @@ export async function fetchBills(
 }
 
 export async function fetchCities(): Promise<City[]> {
+  if (_citiesCache) return _citiesCache;
   const response = await fetch(`${BASE_URL}/api/cities`);
   if (!response.ok) {
     throw new Error(`Failed to fetch cities: ${response.statusText}`);
   }
-  return response.json();
+  _citiesCache = await response.json();
+  return _citiesCache!;
 }
 
 export async function fetchStats(): Promise<StatsResponse> {
@@ -59,11 +65,13 @@ export async function fetchStats(): Promise<StatsResponse> {
 }
 
 export async function fetchTopics(): Promise<string[]> {
+  if (_topicsCache) return _topicsCache;
   const response = await fetch(`${BASE_URL}/api/topics`);
   if (!response.ok) {
     throw new Error(`Failed to fetch topics: ${response.statusText}`);
   }
-  return response.json();
+  _topicsCache = await response.json();
+  return _topicsCache!;
 }
 
 export async function fetchUpcoming(limit: number = 20): Promise<Bill[]> {

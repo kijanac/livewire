@@ -36,14 +36,23 @@ Related news headlines:
 Respond with ONLY the JSON object."""
 
 
-def _call_llm(prompt: str) -> dict:
-    """Call OpenRouter and parse JSON response."""
-    payload = {
+def call_openrouter(
+    prompt: str,
+    *,
+    temperature: float = 0.3,
+    max_tokens: int | None = None,
+    json_mode: bool = False,
+) -> str:
+    """Call OpenRouter and return the raw content string."""
+    payload: dict = {
         "model": settings.OPENROUTER_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "response_format": {"type": "json_object"},
+        "temperature": temperature,
     }
+    if max_tokens:
+        payload["max_tokens"] = max_tokens
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
     headers = {
         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -57,8 +66,12 @@ def _call_llm(prompt: str) -> dict:
         )
         response.raise_for_status()
         result = response.json()
-        content = result["choices"][0]["message"]["content"]
-        return json.loads(content)
+        return result["choices"][0]["message"]["content"]
+
+
+def _call_llm(prompt: str) -> dict:
+    """Call OpenRouter and parse JSON response."""
+    return json.loads(call_openrouter(prompt, json_mode=True))
 
 
 def generate_briefing_text(bill: Bill, news: list[dict]) -> dict:
@@ -156,22 +169,8 @@ def _build_news_query(bill: Bill) -> str:
     )
 
     try:
-        payload = {
-            "model": settings.OPENROUTER_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "max_tokens": 30,
-        }
-        headers = {
-            "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        with httpx.Client(timeout=15.0) as client:
-            response = client.post(settings.OPENROUTER_BASE_URL, json=payload, headers=headers)
-            response.raise_for_status()
-            result = response.json()
-            query = result["choices"][0]["message"]["content"].strip().strip('"')
-            return query[:80]
+        query = call_openrouter(prompt, temperature=0.1, max_tokens=30).strip().strip('"')
+        return query[:80]
     except Exception:
         words = bill.title.split()[:6]
         return f"{bill.city_name} {' '.join(words)}"

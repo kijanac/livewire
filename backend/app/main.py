@@ -38,6 +38,7 @@ def run_ingestion_all_cities() -> None:
         session = SessionLocal()
         try:
             added, updated = ingester.ingest(session)
+            officials_count = ingester.ingest_officials(session)
             logger.info(
                 "Scheduled ingestion completed for city",
                 extra={
@@ -45,6 +46,7 @@ def run_ingestion_all_cities() -> None:
                     "city": city_key,
                     "bills_added": added,
                     "bills_updated": updated,
+                    "officials_synced": officials_count,
                 },
             )
         except Exception:
@@ -54,33 +56,6 @@ def run_ingestion_all_cities() -> None:
                     "event": "scheduled_ingestion_city_failed",
                     "city": city_key,
                 },
-            )
-        finally:
-            session.close()
-
-    # Ingest officials for all cities
-    for city_key, city_config in settings.CITIES.items():
-        ingester = LegistarIngester(
-            city_key=city_key,
-            city_config=city_config,
-            base_url=settings.LEGISTAR_BASE_URL,
-        )
-        session = SessionLocal()
-        try:
-            count = ingester.ingest_officials(session)
-            if count:
-                logger.info(
-                    "Officials ingested for city",
-                    extra={
-                        "event": "officials_ingested",
-                        "city": city_key,
-                        "count": count,
-                    },
-                )
-        except Exception:
-            logger.exception(
-                "Officials ingestion failed for city",
-                extra={"event": "officials_ingestion_failed", "city": city_key},
             )
         finally:
             session.close()

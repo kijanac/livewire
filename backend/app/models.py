@@ -46,6 +46,7 @@ class Bill(Base):
     enactment_date = Column(DateTime, nullable=True)
     url = Column(String, nullable=True)
     topics = Column(Text, nullable=True)  # JSON-encoded list of topic strings
+    enriched_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
@@ -55,6 +56,7 @@ class Bill(Base):
         Index("ix_bills_status", "status"),
         Index("ix_bills_type_name", "type_name"),
         Index("ix_bills_intro_date", "intro_date"),
+        Index("ix_bills_agenda_date", "agenda_date"),
     )
 
     def __repr__(self) -> str:
@@ -200,6 +202,7 @@ class VoteRecord(Base):
     official = relationship("Official")
 
     __table_args__ = (
+        UniqueConstraint("bill_id", "official_id", name="uq_vote_bill_official"),
         Index("ix_vote_records_bill_id", "bill_id"),
         Index("ix_vote_records_official_id", "official_id"),
     )

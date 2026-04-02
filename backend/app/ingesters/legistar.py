@@ -9,6 +9,25 @@ from app.models import Bill, BillAction, Official, VoteRecord, bill_sponsors
 
 logger = logging.getLogger(__name__)
 
+_YEA_VALUES = frozenset({"yea", "aye", "affirmative", "yes"})
+_NAY_VALUES = frozenset({"nay", "no", "negative"})
+_ABSTAIN_VALUES = frozenset({"abstain", "recused", "present"})
+_ABSENT_VALUES = frozenset({"absent", "excused"})
+
+
+def normalize_vote(raw: str) -> str:
+    """Normalize a raw vote string to a canonical value."""
+    val = raw.strip().lower()
+    if val in _YEA_VALUES:
+        return "yea"
+    if val in _NAY_VALUES:
+        return "nay"
+    if val in _ABSTAIN_VALUES:
+        return "abstain"
+    if val in _ABSENT_VALUES:
+        return "absent"
+    return "other"
+
 
 def _parse_datetime(value: str | None) -> datetime | None:
     """Parse an ISO-format datetime string from Legistar, returning None on failure."""
@@ -26,6 +45,39 @@ class LegistarIngester(BaseIngester):
         self.city_name = city_config["name"]
         self.state = city_config["state"]
         self.base_url = base_url
+
+    def _fetch_list(self, client: httpx.Client, url: str) -> list | None:
+        """Fetch a URL and return the parsed list, or None on failure."""
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            data = response.json()
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            return None
+        if not isinstance(data, list):
+            return None
+        return data
+
+    def _get_or_create_official(
+        self, session: Session, source_id: str, name: str
+    ) -> Official:
+        """Look up an official by source_id+city, or create a stub."""
+        official = (
+            session.query(Official)
+            .filter_by(source_id=source_id, city=self.city_key)
+            .first()
+        )
+        if not official:
+            official = Official(
+                source_id=source_id,
+                city=self.city_key,
+                city_name=self.city_name,
+                state=self.state,
+                name=name,
+            )
+            session.add(official)
+            session.flush()
+        return official
 
     def ingest(self, session: Session) -> tuple[int, int]:
         """Fetch matters from Legistar and upsert into the database.
@@ -189,6 +241,7 @@ class LegistarIngester(BaseIngester):
                 .first()
             )
 
+            active_flag = person.get("PersonActiveFlag", 1)
             data = {
                 "source_id": source_id,
                 "city": self.city_key,
@@ -198,10 +251,9 @@ class LegistarIngester(BaseIngester):
                 "title": person.get("PersonTitle"),
                 "district": person.get("PersonWard"),
                 "party": person.get("PersonParty"),
-                "body_name": person.get("PersonActiveFlag"),
                 "email": person.get("PersonEmail"),
                 "website": person.get("PersonWWW"),
-                "active": bool(person.get("PersonActiveFlag", 1)),
+                "active": bool(active_flag),
                 "updated_at": _parse_datetime(person.get("PersonLastModifiedUtc")),
             }
 
@@ -227,19 +279,15 @@ class LegistarIngester(BaseIngester):
         source_id = bill.source_id
         result = {"sponsors": 0, "votes": 0, "actions": 0}
 
-        # Skip if already enriched (has any actions)
-        existing_actions = session.query(BillAction).filter_by(bill_id=bill.id).first()
-        if existing_actions:
+        if bill.enriched_at:
             return result
 
         with httpx.Client(timeout=30.0) as client:
-            # Sponsors
             result["sponsors"] = self._fetch_sponsors(client, session, bill, source_id)
-            # Actions (includes vote events)
             result["actions"] = self._fetch_actions(client, session, bill, source_id)
-            # Votes (individual roll call records)
             result["votes"] = self._fetch_votes(client, session, bill, source_id)
 
+        bill.enriched_at = datetime.now(tz=timezone.utc)
         session.commit()
         logger.info(
             "Bill enrichment completed",
@@ -256,14 +304,8 @@ class LegistarIngester(BaseIngester):
         self, client: httpx.Client, session: Session, bill: Bill, source_id: str
     ) -> int:
         url = f"{self.base_url}/{self.city_key}/matters/{source_id}/sponsors"
-        try:
-            response = client.get(url)
-            response.raise_for_status()
-            sponsors = response.json()
-        except (httpx.HTTPStatusError, httpx.RequestError):
-            return 0
-
-        if not isinstance(sponsors, list):
+        sponsors = self._fetch_list(client, url)
+        if sponsors is None:
             return 0
 
         count = 0
@@ -272,25 +314,9 @@ class LegistarIngester(BaseIngester):
             if not person_id:
                 continue
 
-            official = (
-                session.query(Official)
-                .filter_by(source_id=person_id, city=self.city_key)
-                .first()
-            )
-            if not official:
-                # Create a stub official from the sponsor data
-                name = sponsor.get("MatterSponsorName", "Unknown")
-                official = Official(
-                    source_id=person_id,
-                    city=self.city_key,
-                    city_name=bill.city_name,
-                    state=bill.state,
-                    name=name,
-                )
-                session.add(official)
-                session.flush()
+            name = sponsor.get("MatterSponsorName", "Unknown")
+            official = self._get_or_create_official(session, person_id, name)
 
-            # Insert into association table if not already present
             exists = session.execute(
                 bill_sponsors.select().where(
                     bill_sponsors.c.bill_id == bill.id,
@@ -309,14 +335,8 @@ class LegistarIngester(BaseIngester):
         self, client: httpx.Client, session: Session, bill: Bill, source_id: str
     ) -> int:
         url = f"{self.base_url}/{self.city_key}/matters/{source_id}/histories"
-        try:
-            response = client.get(url)
-            response.raise_for_status()
-            actions = response.json()
-        except (httpx.HTTPStatusError, httpx.RequestError):
-            return 0
-
-        if not isinstance(actions, list):
+        actions = self._fetch_list(client, url)
+        if actions is None:
             return 0
 
         count = 0
@@ -326,7 +346,6 @@ class LegistarIngester(BaseIngester):
             body_name = action.get("MatterHistoryActionBodyName")
             result = action.get("MatterHistoryPassedFlagName")
 
-            # Resolve mover/seconder if available
             mover_id = None
             seconder_id = None
             mover_person_id = str(action.get("MatterHistoryMoverId") or "")
@@ -363,14 +382,8 @@ class LegistarIngester(BaseIngester):
         self, client: httpx.Client, session: Session, bill: Bill, source_id: str
     ) -> int:
         url = f"{self.base_url}/{self.city_key}/matters/{source_id}/votes"
-        try:
-            response = client.get(url)
-            response.raise_for_status()
-            votes = response.json()
-        except (httpx.HTTPStatusError, httpx.RequestError):
-            return 0
-
-        if not isinstance(votes, list):
+        votes = self._fetch_list(client, url)
+        if votes is None:
             return 0
 
         count = 0
@@ -379,30 +392,21 @@ class LegistarIngester(BaseIngester):
             if not person_id:
                 continue
 
-            official = (
-                session.query(Official)
-                .filter_by(source_id=person_id, city=self.city_key)
+            name = vote.get("VotePersonName", "Unknown")
+            official = self._get_or_create_official(session, person_id, name)
+
+            vote_name = vote.get("VoteValueName", "")
+            vote_value = normalize_vote(vote_name) if vote_name else "other"
+            vote_date = _parse_datetime(vote.get("VoteLastModifiedUtc"))
+
+            # Skip duplicates (same bill + official)
+            existing = (
+                session.query(VoteRecord)
+                .filter_by(bill_id=bill.id, official_id=official.id)
                 .first()
             )
-            if not official:
-                name = vote.get("VotePersonName", "Unknown")
-                official = Official(
-                    source_id=person_id,
-                    city=self.city_key,
-                    city_name=bill.city_name,
-                    state=bill.state,
-                    name=name,
-                )
-                session.add(official)
-                session.flush()
-
-            vote_value = str(vote.get("VoteValueId", ""))
-            vote_name = vote.get("VoteValueName", "")
-            # Normalize vote values
-            if vote_name:
-                vote_value = vote_name
-
-            vote_date = _parse_datetime(vote.get("VoteLastModifiedUtc"))
+            if existing:
+                continue
 
             session.add(VoteRecord(
                 bill_id=bill.id,

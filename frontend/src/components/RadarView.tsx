@@ -241,7 +241,7 @@ function RadarView() {
       {!loading && radar && radar.clusters.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {radar.clusters.map((cluster, i) => (
-            <div key={i} className="animate-fade-up" style={{ animationDelay: `${i * 100}ms` }}>
+            <div key={cluster.label} className="animate-fade-up" style={{ animationDelay: `${i * 100}ms` }}>
               <ClusterCard
                 cluster={cluster}
                 onBillClick={setSelectedBillId}
