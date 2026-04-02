@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getStatusClasses, formatTopic } from "@/lib/bill-utils";
+import { Zap } from "lucide-react";
 
 const OUTCOME_INDICATORS = [
   { key: "passed", color: "bg-green-500", label: "passed" },
@@ -59,9 +60,7 @@ function OutcomeBar({ outcomes }: { outcomes: ClusterOutcomes }) {
 
       {outcomes.velocity_flag && (
         <div className="flex items-center gap-1.5 text-xs font-medium text-primary">
-          <svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-          </svg>
+          <Zap className="w-3.5 h-3.5 flex-shrink-0" />
           <span>
             {total} bills in {outcomes.intro_span_days} days — possible coordinated campaign
           </span>
