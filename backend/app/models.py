@@ -128,6 +128,7 @@ class BillBriefing(Base):
     reception = Column(Text, nullable=True)
     news_json = Column(Text, nullable=True)  # JSON list of {title, url, source, date}
     power_analysis = Column(Text, nullable=True)  # AI-generated power analysis
+    narrative_json = Column(Text, nullable=True)  # JSON: cached narrative frame analysis
     generated_at = Column(DateTime, server_default=func.now())
 
     bill = relationship("Bill", lazy="joined")

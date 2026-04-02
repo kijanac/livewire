@@ -48,6 +48,8 @@ def init_db() -> None:
                 conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN reception TEXT"))
             if "power_analysis" not in existing_briefing_cols:
                 conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN power_analysis TEXT"))
+            if "narrative_json" not in existing_briefing_cols:
+                conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN narrative_json TEXT"))
 
 
 def get_db() -> Generator[Session, None, None]:

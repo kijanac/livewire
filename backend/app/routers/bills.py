@@ -1,13 +1,14 @@
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from sqlalchemy.orm import selectinload
-
+from app.briefing import call_openrouter, get_or_create_briefing
 from app.config import settings
+from app.similarity import cluster_bills, find_similar_bills
 from app.database import SessionLocal, get_db
 from app.ingesters.legistar import LegistarIngester
 from app.models import Bill, BillAction, BillBriefing, CollectionItem, Official, VoteRecord, bill_sponsors
@@ -22,7 +23,9 @@ from app.schemas import (
     ClusterOutcomes,
     IngestRequest,
     IngestResponse,
+    NarrativeSection,
     NewsArticle,
+    NewsFrame,
     OfficialResponse,
     PowerSection,
     RadarBill,
@@ -189,9 +192,6 @@ def _compute_cluster_outcomes(bills: list["Bill"]) -> ClusterOutcomes:
 
 def _build_radar(topic: str | None, min_cities: int, db: Session) -> RadarResponse:
     """Build radar response with clustering and LLM labels."""
-    import json as _json
-
-    from app.similarity import cluster_bills
 
     query = db.query(Bill)
     if topic:
@@ -220,7 +220,7 @@ def _build_radar(topic: str | None, min_cities: int, db: Session) -> RadarRespon
             topics = []
             if b.topics:
                 try:
-                    topics = _json.loads(b.topics)
+                    topics = json.loads(b.topics)
                 except (ValueError, TypeError):
                     pass
             radar_bills.append(RadarBill(
@@ -254,7 +254,6 @@ def _build_radar(topic: str | None, min_cities: int, db: Session) -> RadarRespon
     # Generate labels + outcome insights via LLM (single call)
     if clusters and settings.OPENROUTER_API_KEY:
         try:
-            from app.briefing import call_openrouter
 
             cluster_descriptions = []
             for i, c in enumerate(clusters):
@@ -291,7 +290,7 @@ def _build_radar(topic: str | None, min_cities: int, db: Session) -> RadarRespon
             )
 
             raw = call_openrouter(prompt, temperature=0.2, json_mode=True)
-            parsed = _json.loads(raw)
+            parsed = json.loads(raw)
             items = parsed.get("clusters", parsed if isinstance(parsed, list) else [])
             for i, item in enumerate(items):
                 if i < len(clusters):
@@ -412,7 +411,6 @@ def _generate_power_analysis(
     actions: list[ActionResponse],
 ) -> str:
     """Generate an AI power analysis for a bill."""
-    from app.briefing import call_openrouter
 
     sponsor_text = ", ".join(s.name for s in sponsors) if sponsors else "No sponsors listed"
     vote_text = "No votes recorded"
@@ -457,18 +455,110 @@ def _generate_power_analysis(
         return ""
 
 
+def _build_narrative_section(
+    db: Session, bill: Bill, briefing: BillBriefing, news: list[NewsArticle], actions: list[ActionResponse],
+) -> NarrativeSection | None:
+    """Build narrative intelligence from news headlines + bill actions."""
+    if not news and not actions:
+        return None
+
+    # Return cached analysis if available
+    if briefing.narrative_json:
+        try:
+            cached = json.loads(briefing.narrative_json)
+            return NarrativeSection(**cached)
+        except (ValueError, TypeError):
+            pass
+
+    if not settings.OPENROUTER_API_KEY:
+        return None
+
+    analysis = _generate_narrative_analysis(bill, news, actions)
+    if not analysis:
+        return None
+
+    # Cache the result
+    briefing.narrative_json = json.dumps(analysis.model_dump())
+    db.commit()
+
+    return analysis
+
+
+def _generate_narrative_analysis(
+    bill: Bill, news: list[NewsArticle], actions: list[ActionResponse],
+) -> NarrativeSection | None:
+    """Generate AI narrative frame analysis from news + actions."""
+    headlines = "\n".join(
+        f"- \"{a.title}\" ({a.source}, {a.date or 'undated'})"
+        for a in news
+    ) if news else "No news coverage found."
+
+    action_text = "\n".join(
+        f"- {a.date or '?'}: {a.action or '?'} ({a.body or '?'})"
+        + (f" — Result: {a.result}" if a.result else "")
+        for a in actions[-10:]
+    ) if actions else "No action history."
+
+    prompt = (
+        "You are a narrative intelligence analyst for community organizers. "
+        "Analyze how this bill is being framed in news coverage and official proceedings.\n\n"
+        f"Bill: {bill.title}\n"
+        f"City: {bill.city_name}, {bill.state}\n"
+        f"Status: {bill.status or 'Unknown'}\n"
+        f"Topics: {bill.topics or '[]'}\n\n"
+        f"News Headlines:\n{headlines}\n\n"
+        f"Recent Legislative Actions:\n{action_text}\n\n"
+        "Return JSON with this structure:\n"
+        "{\n"
+        '  "frames": [{"source": "outlet name", "headline": "headline text", '
+        '"frame": "2-4 word frame label", "stance": "support|opposition|neutral"}],\n'
+        '  "support_narrative": "1-2 sentences: how supporters frame this",\n'
+        '  "opposition_narrative": "1-2 sentences: how opponents frame this (or null if no opposition visible)",\n'
+        '  "narrative_trajectory": "1 sentence: is the discourse shifting? In what direction?",\n'
+        '  "talking_points": ["point 1", "point 2", "point 3"]\n'
+        "}\n\n"
+        "For frames, classify EACH news headline. For talking_points, suggest 2-3 concise "
+        "points an organizer could use at a council meeting or in a flyer. Be direct."
+    )
+
+    try:
+        raw = call_openrouter(prompt, json_mode=True)
+        parsed = json.loads(raw)
+
+        frames = [
+            NewsFrame(
+                source=f.get("source", ""),
+                headline=f.get("headline", ""),
+                frame=f.get("frame", ""),
+                stance=f.get("stance", "neutral"),
+            )
+            for f in parsed.get("frames", [])
+            if isinstance(f, dict)
+        ]
+
+        return NarrativeSection(
+            frames=frames,
+            support_narrative=parsed.get("support_narrative"),
+            opposition_narrative=parsed.get("opposition_narrative"),
+            narrative_trajectory=parsed.get("narrative_trajectory"),
+            talking_points=parsed.get("talking_points", []),
+        )
+    except Exception as exc:
+        logger.error(
+            "Narrative analysis generation failed",
+            extra={"event": "narrative_analysis_failed", "bill_id": bill.id, "error": str(exc)},
+        )
+        return None
+
+
 @router.get("/bills/{bill_id}/briefing", response_model=BillBriefingResponse)
 def get_bill_briefing(
     bill_id: int,
     db: Session = Depends(get_db),
 ) -> BillBriefingResponse:
-    import json as _json
-
     bill = db.query(Bill).filter(Bill.id == bill_id).first()
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
-
-    from app.briefing import get_or_create_briefing
 
     briefing = get_or_create_briefing(db, bill)
 
@@ -476,13 +566,12 @@ def get_bill_briefing(
     news = []
     if briefing.news_json:
         try:
-            news = [NewsArticle(**a) for a in _json.loads(briefing.news_json)]
+            news = [NewsArticle(**a) for a in json.loads(briefing.news_json)]
         except (ValueError, TypeError):
             pass
 
     # Find similar bills via TF-IDF cosine similarity
     similar_bills = []
-    from app.similarity import find_similar_bills
 
     similar_ids_scores = find_similar_bills(bill.id, n=8)
     if similar_ids_scores:
@@ -540,6 +629,9 @@ def get_bill_briefing(
     # Build power intelligence section
     power = _build_power_section(db, bill, briefing)
 
+    # Build narrative intelligence section
+    narrative = _build_narrative_section(db, bill, briefing, news, power.actions if power else [])
+
     return BillBriefingResponse(
         bill=bill_to_response(bill),
         summary=briefing.summary,
@@ -551,6 +643,7 @@ def get_bill_briefing(
         timeline=timeline,
         collection_notes=collection_notes,
         power=power,
+        narrative=narrative,
     )
 
 
@@ -640,8 +733,7 @@ _STATS_CACHE_TTL = 300  # 5 minutes
 
 @router.get("/stats", response_model=StatsResponse)
 def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
-    import json as _json
-
+    
     global _stats_cache
     now_ts = _time.time()
     if _stats_cache and (now_ts - _stats_cache[1]) < _STATS_CACHE_TTL:
@@ -677,7 +769,7 @@ def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
     topic_counts: dict[str, int] = {}
     for (topics_json,) in active_bills:
         try:
-            for t in _json.loads(topics_json):
+            for t in json.loads(topics_json):
                 if t != "other":
                     topic_counts[t] = topic_counts.get(t, 0) + 1
         except (ValueError, TypeError):

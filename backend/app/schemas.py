@@ -259,6 +259,24 @@ class PowerSection(BaseModel):
     analysis: str | None = None
 
 
+# --- Narrative Intelligence schemas ---
+
+
+class NewsFrame(BaseModel):
+    source: str
+    headline: str
+    frame: str
+    stance: str  # "support", "opposition", "neutral"
+
+
+class NarrativeSection(BaseModel):
+    frames: list[NewsFrame] = []
+    support_narrative: str | None = None
+    opposition_narrative: str | None = None
+    narrative_trajectory: str | None = None
+    talking_points: list[str] = []
+
+
 class BillBriefingResponse(BaseModel):
     bill: BillResponse
     summary: str | None = None
@@ -270,3 +288,4 @@ class BillBriefingResponse(BaseModel):
     timeline: list[dict] = []
     collection_notes: list[dict] = []
     power: PowerSection | None = None
+    narrative: NarrativeSection | None = None

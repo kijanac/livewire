@@ -209,6 +209,21 @@ export interface PowerSection {
   analysis: string | null;
 }
 
+export interface NewsFrame {
+  source: string;
+  headline: string;
+  frame: string;
+  stance: "support" | "opposition" | "neutral";
+}
+
+export interface NarrativeSection {
+  frames: NewsFrame[];
+  support_narrative: string | null;
+  opposition_narrative: string | null;
+  narrative_trajectory: string | null;
+  talking_points: string[];
+}
+
 export interface BillBriefing {
   bill: Bill;
   summary: string | null;
@@ -220,4 +235,5 @@ export interface BillBriefing {
   timeline: { event: string; date: string }[];
   collection_notes: { collection_name: string; note: string }[];
   power: PowerSection | null;
+  narrative: NarrativeSection | null;
 }
