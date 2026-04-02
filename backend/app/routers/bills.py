@@ -204,7 +204,7 @@ def _build_radar(topic: str | None, min_cities: int, db: Session) -> RadarRespon
     if len(bill_ids) < 2:
         return RadarResponse(clusters=[], total_clusters=0, total_bills=0)
 
-    raw_clusters = cluster_bills(bill_ids, distance_threshold=0.7)
+    raw_clusters = cluster_bills(bill_ids, distance_threshold=0.35)
 
     clusters = []
     total_bills = 0
