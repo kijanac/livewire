@@ -269,6 +269,14 @@ class VotingPatterns(BaseModel):
     swing_voters: list[str] = []
 
 
+class DocumentResponse(BaseModel):
+    id: int
+    name: str
+    url: str
+
+    model_config = {"from_attributes": True}
+
+
 class PowerSection(BaseModel):
     sponsors: list[OfficialResponse] = []
     votes: VoteSummary | None = None
@@ -341,6 +349,7 @@ class BillBriefingResponse(BaseModel):
     similar_bills: list[SimilarBill] = []
     timeline: list[dict] = []
     collection_notes: list[dict] = []
+    documents: list[DocumentResponse] = []
     power: PowerSection | None = None
     narrative: NarrativeSection | None = None
     coalition: CoalitionBrief | None = None

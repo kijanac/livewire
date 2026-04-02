@@ -12,7 +12,7 @@ from app.config import settings
 from app.similarity import cluster_bills, find_similar_bills
 from app.database import SessionLocal, get_db
 from app.ingesters.legistar import LegistarIngester
-from app.models import Bill, BillAction, BillBriefing, CollectionItem, Official, VoteRecord, bill_sponsors
+from app.models import Bill, BillAction, BillBriefing, BillDocument, CollectionItem, Official, VoteRecord, bill_sponsors
 from app.schemas import (
     ActionResponse,
     BillBriefingResponse,
@@ -25,6 +25,7 @@ from app.schemas import (
     ClusterOutcomes,
     CoalitionBrief,
     CoalitionsResponse,
+    DocumentResponse,
     IngestRequest,
     IngestResponse,
     NarrativeSection,
@@ -932,6 +933,10 @@ def get_bill_briefing(
                 "note": item.note,
             })
 
+    # Fetch documents (attachments from Legistar)
+    doc_rows = db.query(BillDocument).filter(BillDocument.bill_id == bill.id).all()
+    documents = [DocumentResponse.model_validate(d) for d in doc_rows]
+
     # Build power intelligence section
     power = _build_power_section(db, bill, briefing, similar_ids_scores or [])
 
@@ -951,6 +956,7 @@ def get_bill_briefing(
         similar_bills=similar_bills,
         timeline=timeline,
         collection_notes=collection_notes,
+        documents=documents,
         power=power,
         narrative=narrative,
         coalition=coalition,

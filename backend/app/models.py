@@ -137,6 +137,29 @@ class BillBriefing(Base):
         return f"<BillBriefing(id={self.id}, bill_id={self.bill_id})>"
 
 
+class BillDocument(Base):
+    __tablename__ = "bill_documents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bill_id = Column(
+        Integer,
+        ForeignKey("bills.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String, nullable=False)
+    url = Column(String, nullable=False)
+
+    bill = relationship("Bill")
+
+    __table_args__ = (
+        UniqueConstraint("bill_id", "url", name="uq_bill_document"),
+        Index("ix_bill_documents_bill_id", "bill_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<BillDocument(id={self.id}, bill_id={self.bill_id}, name={self.name})>"
+
+
 class BillEmbedding(Base):
     __tablename__ = "bill_embeddings"
 

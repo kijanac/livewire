@@ -5,7 +5,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.ingesters.base import BaseIngester
-from app.models import Bill, BillAction, Official, VoteRecord, bill_sponsors
+from app.models import Bill, BillAction, BillDocument, Official, VoteRecord, bill_sponsors
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +277,7 @@ class LegistarIngester(BaseIngester):
         Returns dict with keys: sponsors, votes, actions (counts of records stored).
         """
         source_id = bill.source_id
-        result = {"sponsors": 0, "votes": 0, "actions": 0}
+        result = {"sponsors": 0, "votes": 0, "actions": 0, "documents": 0}
 
         if bill.enriched_at:
             return result
@@ -286,6 +286,7 @@ class LegistarIngester(BaseIngester):
             result["sponsors"] = self._fetch_sponsors(client, session, bill, source_id)
             result["actions"] = self._fetch_actions(client, session, bill, source_id)
             result["votes"] = self._fetch_votes(client, session, bill, source_id)
+            result["documents"] = self._fetch_attachments(client, session, bill, source_id)
 
         bill.enriched_at = datetime.now(tz=timezone.utc)
         session.commit()
@@ -414,6 +415,38 @@ class LegistarIngester(BaseIngester):
                 vote_value=vote_value,
                 vote_date=vote_date,
                 action_text=vote.get("VoteEventItemActionName"),
+            ))
+            count += 1
+
+        return count
+
+    def _fetch_attachments(
+        self, client: httpx.Client, session: Session, bill: Bill, source_id: str
+    ) -> int:
+        url = f"{self.base_url}/{self.city_key}/matters/{source_id}/attachments"
+        attachments = self._fetch_list(client, url)
+        if attachments is None:
+            return 0
+
+        count = 0
+        for att in attachments:
+            name = (att.get("MatterAttachmentName") or "").strip()
+            link = (att.get("MatterAttachmentHyperlink") or "").strip()
+            if not name or not link:
+                continue
+
+            existing = (
+                session.query(BillDocument)
+                .filter_by(bill_id=bill.id, url=link)
+                .first()
+            )
+            if existing:
+                continue
+
+            session.add(BillDocument(
+                bill_id=bill.id,
+                name=name,
+                url=link,
             ))
             count += 1
 

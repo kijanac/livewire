@@ -275,6 +275,12 @@ export interface CoalitionBrief {
   insight: string | null;
 }
 
+export interface BillDocument {
+  id: number;
+  name: string;
+  url: string;
+}
+
 export interface BillBriefing {
   bill: Bill;
   summary: string | null;
@@ -285,6 +291,7 @@ export interface BillBriefing {
   similar_bills: SimilarBill[];
   timeline: { event: string; date: string }[];
   collection_notes: { collection_name: string; note: string }[];
+  documents: BillDocument[];
   power: PowerSection | null;
   narrative: NarrativeSection | null;
   coalition: CoalitionBrief | null;
