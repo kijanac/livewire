@@ -87,9 +87,9 @@ def run_ingestion_all_cities() -> None:
         finally:
             session.close()
 
-    # Generate embeddings for any new bills
+    # Generate embeddings for any new bills, then pre-compute similar bills
     if settings.OPENROUTER_API_KEY:
-        from app.similarity import embed_unembedded_bills
+        from app.similarity import compute_all_similar, embed_unembedded_bills
 
         try:
             embedded = embed_unembedded_bills()
@@ -104,6 +104,21 @@ def run_ingestion_all_cities() -> None:
             logger.exception(
                 "Post-ingestion embeddings failed",
                 extra={"event": "post_ingestion_embeddings_failed"},
+            )
+
+        try:
+            precomputed = compute_all_similar()
+            logger.info(
+                "Post-ingestion similar bills pre-computed",
+                extra={
+                    "event": "post_ingestion_similar_completed",
+                    "bills_precomputed": precomputed,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Post-ingestion similar computation failed",
+                extra={"event": "post_ingestion_similar_failed"},
             )
 
 

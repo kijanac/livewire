@@ -111,13 +111,13 @@ def embed_unembedded_bills(session=None) -> int:
             session.close()
 
 
-def find_similar_bills(bill_id: int, n: int = 5) -> list[tuple[int, float]]:
-    """Find N most similar bills by cosine similarity of embeddings.
+_SIMILAR_N = 10  # pre-compute top 10 for cache
 
-    Processes embeddings in chunks to stay within memory limits on
-    constrained environments (e.g. Render free tier, 512 MB).
+
+def find_similar_bills(bill_id: int, n: int = 5) -> list[tuple[int, float]]:
+    """Find N most similar bills. Uses pre-computed cache when available,
+    falls back to full embedding scan otherwise.
     """
-    CHUNK_SIZE = 200
     session = SessionLocal()
     try:
         target = (
@@ -128,43 +128,102 @@ def find_similar_bills(bill_id: int, n: int = 5) -> list[tuple[int, float]]:
         if not target:
             return []
 
-        target_vec = np.array(json.loads(target.embedding_json), dtype=np.float32)
-        target_norm = np.linalg.norm(target_vec)
-        if target_norm == 0:
-            return []
-        target_vec = target_vec / target_norm
+        # Try pre-computed cache first
+        if target.similar_json:
+            try:
+                cached = json.loads(target.similar_json)
+                return [(bid, score) for bid, score in cached[:n]]
+            except (ValueError, TypeError):
+                pass
 
-        # Stream embeddings in chunks, keeping only top-N via min-heap
-        base_query = (
-            session.query(BillEmbedding.bill_id, BillEmbedding.embedding_json)
-            .filter(BillEmbedding.bill_id != bill_id)
-            .order_by(BillEmbedding.bill_id)
-        )
-        top_n: list[tuple[float, int]] = []  # min-heap of (similarity, bill_id)
-        offset = 0
-
-        while True:
-            chunk = base_query.limit(CHUNK_SIZE).offset(offset).all()
-            if not chunk:
-                break
-
-            for other_id, emb_json in chunk:
-                other_vec = np.array(json.loads(emb_json), dtype=np.float32)
-                other_norm = np.linalg.norm(other_vec)
-                if other_norm == 0:
-                    continue
-                similarity = float(np.dot(target_vec, other_vec / other_norm))
-                if similarity > 0.3:
-                    if len(top_n) < n:
-                        heapq.heappush(top_n, (similarity, other_id))
-                    elif similarity > top_n[0][0]:
-                        heapq.heapreplace(top_n, (similarity, other_id))
-
-            offset += CHUNK_SIZE
-
-        return [(bid, score) for score, bid in sorted(top_n, reverse=True)]
+        # Fall back to full scan
+        return _scan_similar(session, target, n)
     finally:
         session.close()
+
+
+def _scan_similar(
+    session, target: BillEmbedding, n: int,
+) -> list[tuple[int, float]]:
+    """Full embedding scan for similar bills. Used as fallback and for pre-computation."""
+    CHUNK_SIZE = 200
+    target_vec = np.array(json.loads(target.embedding_json), dtype=np.float32)
+    target_norm = np.linalg.norm(target_vec)
+    if target_norm == 0:
+        return []
+    target_vec = target_vec / target_norm
+
+    base_query = (
+        session.query(BillEmbedding.bill_id, BillEmbedding.embedding_json)
+        .filter(BillEmbedding.bill_id != target.bill_id)
+        .order_by(BillEmbedding.bill_id)
+    )
+    top_n: list[tuple[float, int]] = []
+    offset = 0
+
+    while True:
+        chunk = base_query.limit(CHUNK_SIZE).offset(offset).all()
+        if not chunk:
+            break
+
+        for other_id, emb_json in chunk:
+            other_vec = np.array(json.loads(emb_json), dtype=np.float32)
+            other_norm = np.linalg.norm(other_vec)
+            if other_norm == 0:
+                continue
+            similarity = float(np.dot(target_vec, other_vec / other_norm))
+            if similarity > 0.3:
+                if len(top_n) < n:
+                    heapq.heappush(top_n, (similarity, other_id))
+                elif similarity > top_n[0][0]:
+                    heapq.heapreplace(top_n, (similarity, other_id))
+
+        offset += CHUNK_SIZE
+
+    return [(bid, score) for score, bid in sorted(top_n, reverse=True)]
+
+
+def compute_all_similar(session=None) -> int:
+    """Pre-compute similar bills for all embeddings missing a cache.
+    Call after embed_unembedded_bills() in the ingestion pipeline.
+    """
+    own_session = session is None
+    if own_session:
+        session = SessionLocal()
+
+    try:
+        uncached = (
+            session.query(BillEmbedding)
+            .filter(BillEmbedding.similar_json.is_(None))
+            .all()
+        )
+        if not uncached:
+            return 0
+
+        count = 0
+        for emb in uncached:
+            try:
+                similar = _scan_similar(session, emb, _SIMILAR_N)
+                emb.similar_json = json.dumps(similar)
+                count += 1
+                if count % 50 == 0:
+                    session.commit()
+                    time.sleep(0.1)
+            except Exception as exc:
+                logger.error(
+                    "Similar computation failed",
+                    extra={"event": "similar_computation_failed", "bill_id": emb.bill_id, "error": str(exc)},
+                )
+
+        session.commit()
+        logger.info(
+            "Similar bills pre-computed",
+            extra={"event": "similar_precomputed", "count": count},
+        )
+        return count
+    finally:
+        if own_session:
+            session.close()
 
 
 MAX_CLUSTER_BILLS = 500

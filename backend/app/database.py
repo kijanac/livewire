@@ -50,6 +50,14 @@ def init_db() -> None:
                 conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN power_analysis TEXT"))
             if "narrative_json" not in existing_briefing_cols:
                 conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN narrative_json TEXT"))
+            if "coalition_json" not in existing_briefing_cols:
+                conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN coalition_json TEXT"))
+
+    if "bill_embeddings" in inspector.get_table_names():
+        existing_embed_cols = {col["name"] for col in inspector.get_columns("bill_embeddings")}
+        with engine.begin() as conn:
+            if "similar_json" not in existing_embed_cols:
+                conn.execute(text("ALTER TABLE bill_embeddings ADD COLUMN similar_json TEXT"))
 
 
 def get_db() -> Generator[Session, None, None]:

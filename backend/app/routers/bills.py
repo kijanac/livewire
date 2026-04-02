@@ -491,11 +491,18 @@ def get_coalitions(db: Session = Depends(get_db)) -> CoalitionsResponse:
 
 
 def _build_coalition_brief(
-    bill: Bill, similar_bills: list[SimilarBill],
+    db: Session, bill: Bill, briefing: BillBriefing, similar_bills: list[SimilarBill],
 ) -> CoalitionBrief | None:
     """Build coalition context for a bill based on similar bills in other cities."""
     if not similar_bills:
         return None
+
+    # Return cached coalition if available
+    if briefing.coalition_json:
+        try:
+            return CoalitionBrief(**json.loads(briefing.coalition_json))
+        except (ValueError, TypeError):
+            pass
 
     ally_cities = [sb.city_name for sb in similar_bills if sb.status and sb.status.strip().lower() in _PASSED_STATUSES]
     contested_cities = [sb.city_name for sb in similar_bills if sb.status and sb.status.strip().lower() not in _PASSED_STATUSES and sb.status.strip().lower() not in _FAILED_STATUSES]
@@ -527,11 +534,17 @@ def _build_coalition_brief(
     if not ally_cities and not contested_cities and not insight:
         return None
 
-    return CoalitionBrief(
+    result = CoalitionBrief(
         ally_cities=ally_cities,
         contested_cities=contested_cities,
         insight=insight,
     )
+
+    # Cache the result
+    briefing.coalition_json = json.dumps(result.model_dump())
+    db.commit()
+
+    return result
 
 
 _PATTERN_SIMILARITY_THRESHOLD = 0.5
@@ -944,7 +957,7 @@ def get_bill_briefing(
     narrative = _build_narrative_section(db, bill, briefing, news, power.actions if power else [])
 
     # Build coalition intelligence brief
-    coalition = _build_coalition_brief(bill, similar_bills)
+    coalition = _build_coalition_brief(db, bill, briefing, similar_bills)
 
     return BillBriefingResponse(
         bill=bill_to_response(bill),

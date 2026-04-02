@@ -129,6 +129,7 @@ class BillBriefing(Base):
     news_json = Column(Text, nullable=True)  # JSON list of {title, url, source, date}
     power_analysis = Column(Text, nullable=True)  # AI-generated power analysis
     narrative_json = Column(Text, nullable=True)  # JSON: cached narrative frame analysis
+    coalition_json = Column(Text, nullable=True)  # JSON: cached coalition brief
     generated_at = Column(DateTime, server_default=func.now())
 
     bill = relationship("Bill", lazy="joined")
@@ -171,6 +172,7 @@ class BillEmbedding(Base):
         nullable=False,
     )
     embedding_json = Column(Text, nullable=False)  # JSON array of floats
+    similar_json = Column(Text, nullable=True)  # JSON: [[bill_id, score], ...]
 
     def __repr__(self) -> str:
         return f"<BillEmbedding(id={self.id}, bill_id={self.bill_id})>"
