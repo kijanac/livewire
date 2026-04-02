@@ -1,64 +1,16 @@
-import { useState, useEffect } from "react";
-import { createCollection } from "../api";
-import type { CollectionStub } from "../types";
+import { useState } from "react";
+import { useCollectionStubs } from "../hooks/useCollectionStubs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-const STORAGE_KEY = "bill_tracker_collections";
-
-function loadStubs(): CollectionStub[] {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  } catch {
-    return [];
-  }
-}
-
-function saveStubs(stubs: CollectionStub[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(stubs));
-}
-
-export function addStubToStorage(stub: CollectionStub) {
-  const stubs = loadStubs();
-  if (!stubs.find((s) => s.slug === stub.slug)) {
-    stubs.unshift(stub);
-    saveStubs(stubs);
-  }
-}
-
-export function removeStubFromStorage(slug: string) {
-  const stubs = loadStubs().filter((s) => s.slug !== slug);
-  saveStubs(stubs);
-}
-
 function CollectionsSidebar() {
-  const [stubs, setStubs] = useState<CollectionStub[]>(loadStubs);
-  const [creating, setCreating] = useState(false);
+  const { stubs, creating, create } = useCollectionStubs();
   const [newName, setNewName] = useState("");
 
-  // Re-read localStorage when the component mounts or the hash changes
-  useEffect(() => {
-    const refresh = () => setStubs(loadStubs());
-    window.addEventListener("hashchange", refresh);
-    return () => window.removeEventListener("hashchange", refresh);
-  }, []);
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    setCreating(true);
-    try {
-      const collection = await createCollection({ name: newName.trim() });
-      const stub = { slug: collection.slug, name: collection.name };
-      addStubToStorage(stub);
-      setStubs(loadStubs());
-      setNewName("");
-      window.location.hash = `#/collection/${collection.slug}`;
-    } catch {
-      // Creation failure
-    } finally {
-      setCreating(false);
-    }
+  const handleCreate = () => {
+    create(newName);
+    setNewName("");
   };
 
   return (

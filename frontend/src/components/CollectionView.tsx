@@ -1,18 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
-import {
-  fetchCollection,
-  updateCollection,
-  deleteCollection,
-  addBillToCollection,
-  updateCollectionItem,
-  removeBillFromCollection,
-} from "../api";
-import type { Collection, Bill } from "../types";
+import { useState } from "react";
+import { useCollection } from "../hooks/useCollection";
 import AddBillModal from "./AddBillModal";
-import {
-  addStubToStorage,
-  removeStubFromStorage,
-} from "./CollectionsSidebar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,9 +14,18 @@ interface CollectionViewProps {
 }
 
 function CollectionView({ slug }: CollectionViewProps) {
-  const [collection, setCollection] = useState<Collection | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    collection,
+    loading,
+    error,
+    saveName,
+    saveDescription,
+    addBill,
+    saveNote,
+    removeItem,
+    remove,
+  } = useCollection(slug);
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
@@ -38,43 +35,14 @@ function CollectionView({ slug }: CollectionViewProps) {
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [noteValue, setNoteValue] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchCollection(slug);
-      setCollection(data);
-      setNameValue(data.name);
-      setDescValue(data.description || "");
-      addStubToStorage({ slug: data.slug, name: data.name });
-    } catch {
-      setError("This collection doesn't exist or was deleted.");
-    } finally {
-      setLoading(false);
-    }
-  }, [slug]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const handleSaveName = async () => {
-    if (!collection || !nameValue.trim()) return;
+  const handleSaveName = () => {
     setEditingName(false);
-    try {
-      const updated = await updateCollection(slug, { name: nameValue.trim() });
-      setCollection(updated);
-      addStubToStorage({ slug: updated.slug, name: updated.name });
-    } catch { /* ignore */ }
+    saveName(nameValue);
   };
 
-  const handleSaveDesc = async () => {
-    if (!collection) return;
+  const handleSaveDesc = () => {
     setEditingDesc(false);
-    try {
-      const updated = await updateCollection(slug, { description: descValue.trim() || undefined });
-      setCollection(updated);
-    } catch { /* ignore */ }
+    saveDescription(descValue);
   };
 
   const handleShare = () => {
@@ -84,37 +52,18 @@ function CollectionView({ slug }: CollectionViewProps) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleAddBill = async (bill: Bill) => {
-    if (!collection) return;
-    try {
-      await addBillToCollection(slug, bill.id);
-      await load();
-    } catch { /* ignore */ }
+  const handleStartEditName = () => {
+    if (collection) {
+      setNameValue(collection.name);
+      setEditingName(true);
+    }
   };
 
-  const handleSaveNote = async (itemId: number) => {
-    setEditingNoteId(null);
-    try {
-      await updateCollectionItem(slug, itemId, noteValue);
-      await load();
-    } catch { /* ignore */ }
-  };
-
-  const handleRemoveItem = async (itemId: number) => {
-    try {
-      await removeBillFromCollection(slug, itemId);
-      await load();
-    } catch { /* ignore */ }
-  };
-
-  const handleDelete = async () => {
-    if (!collection) return;
-    if (!confirm("Delete this collection and all its notes? This can't be undone.")) return;
-    try {
-      await deleteCollection(slug);
-      removeStubFromStorage(slug);
-      window.location.hash = "";
-    } catch { /* ignore */ }
+  const handleStartEditDesc = () => {
+    if (collection) {
+      setDescValue(collection.description || "");
+      setEditingDesc(true);
+    }
   };
 
   if (loading) {
@@ -175,7 +124,7 @@ function CollectionView({ slug }: CollectionViewProps) {
                 className="text-2xl font-bold text-foreground bg-transparent border-b-2 border-primary outline-none w-full"
               />
             ) : (
-              <h1 className="text-page-heading uppercase tracking-tight"><button type="button" className="hover:text-primary transition-colors text-left" onClick={() => setEditingName(true)} aria-label="Edit collection name">{collection.name}</button></h1>
+              <h1 className="text-page-heading uppercase tracking-tight"><button type="button" className="hover:text-primary transition-colors text-left" onClick={handleStartEditName} aria-label="Edit collection name">{collection.name}</button></h1>
             )}
 
             {editingDesc ? (
@@ -189,7 +138,7 @@ function CollectionView({ slug }: CollectionViewProps) {
                 placeholder="What's this collection for?"
               />
             ) : (
-              <button type="button" className="mt-1 text-sm text-muted-foreground hover:text-foreground transition-colors text-left" onClick={() => setEditingDesc(true)} aria-label="Edit description">{collection.description || "What's this collection for?"}</button>
+              <button type="button" className="mt-1 text-sm text-muted-foreground hover:text-foreground transition-colors text-left" onClick={handleStartEditDesc} aria-label="Edit description">{collection.description || "What's this collection for?"}</button>
             )}
           </div>
 
@@ -212,7 +161,7 @@ function CollectionView({ slug }: CollectionViewProps) {
             <Button
               variant="destructive"
               size="icon"
-              onClick={handleDelete}
+              onClick={remove}
               title="Delete collection"
               aria-label="Delete collection"
             >
@@ -324,7 +273,7 @@ function CollectionView({ slug }: CollectionViewProps) {
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      onClick={() => handleRemoveItem(item.id)}
+                      onClick={() => removeItem(item.id)}
                       className="flex-shrink-0 text-muted-foreground hover:text-destructive"
                       title="Remove from collection"
                     >
@@ -339,11 +288,15 @@ function CollectionView({ slug }: CollectionViewProps) {
                     <textarea
                       value={noteValue}
                       onChange={(e) => setNoteValue(e.target.value)}
-                      onBlur={() => handleSaveNote(item.id)}
+                      onBlur={() => {
+                        setEditingNoteId(null);
+                        saveNote(item.id, noteValue);
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
-                          handleSaveNote(item.id);
+                          setEditingNoteId(null);
+                          saveNote(item.id, noteValue);
                         }
                       }}
                       autoFocus
@@ -378,7 +331,9 @@ function CollectionView({ slug }: CollectionViewProps) {
       {showAddModal && (
         <AddBillModal
           existingBillIds={existingBillIds}
-          onAdd={handleAddBill}
+          onAdd={(bill) => {
+            addBill(bill);
+          }}
           onClose={() => setShowAddModal(false)}
         />
       )}

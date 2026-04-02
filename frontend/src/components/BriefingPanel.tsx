@@ -1,6 +1,4 @@
-import { useState, useEffect } from "react";
-import { fetchBriefing } from "../api";
-import type { BillBriefing } from "../types";
+import { useBriefing } from "../hooks/useBriefing";
 import {
   Sheet,
   SheetContent,
@@ -20,33 +18,11 @@ interface BriefingPanelProps {
 }
 
 function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
-  const [currentBillId, setCurrentBillId] = useState(billId);
-  const [history, setHistory] = useState<number[]>([]);
-  const [briefing, setBriefing] = useState<BillBriefing | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { history, briefing, loading, error, navigateTo, goBack } = useBriefing(billId);
 
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    fetchBriefing(currentBillId)
-      .then(setBriefing)
-      .catch(() => setError("Couldn't load this briefing. Try again."))
-      .finally(() => setLoading(false));
-  }, [currentBillId]);
-
-  const navigateTo = (id: number) => {
-    setHistory((prev) => [...prev, currentBillId]);
-    setCurrentBillId(id);
+  const handleNavigate = (id: number) => {
+    navigateTo(id);
     onNavigate?.(id);
-  };
-
-  const goBack = () => {
-    const prev = history[history.length - 1];
-    if (prev !== undefined) {
-      setHistory((h) => h.slice(0, -1));
-      setCurrentBillId(prev);
-    }
   };
 
   return (
@@ -577,7 +553,7 @@ function BriefingPanel({ billId, onClose, onNavigate }: BriefingPanelProps) {
                         <Button
                           key={b.id}
                           variant="outline"
-                          onClick={() => navigateTo(b.id)}
+                          onClick={() => handleNavigate(b.id)}
                           className="w-full text-left h-auto p-3 justify-start items-start flex-col hover:border-primary transition-colors cursor-pointer whitespace-normal"
                         >
                           <div className="flex items-center gap-2 mb-1">

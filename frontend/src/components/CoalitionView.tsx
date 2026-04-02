@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
-import { fetchCoalitions } from "../api";
-import type { CoalitionsResponse, TopicCoalition, CityAlignment } from "../types";
+import { useState } from "react";
+import { useCoalitions } from "../hooks/useCoalitions";
+import type { TopicCoalition, CityAlignment } from "../types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -115,24 +115,7 @@ function TopicCard({ topic }: { topic: TopicCoalition }) {
 }
 
 function CoalitionView() {
-  const [data, setData] = useState<CoalitionsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await fetchCoalitions();
-      setData(result);
-    } catch {
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data, loading } = useCoalitions();
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">

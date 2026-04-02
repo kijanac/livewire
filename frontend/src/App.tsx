@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import { triggerIngest } from "./api";
+import { getCollectionName } from "./hooks/useCollectionStubs";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
 
@@ -33,12 +34,7 @@ function App() {
   const route = useHashRoute();
   const collectionName = useMemo(() => {
     if (route.page !== "collection") return null;
-    try {
-      const stubs = JSON.parse(localStorage.getItem("bill_tracker_collections") || "[]");
-      return stubs.find((s: { slug: string }) => s.slug === route.slug)?.name ?? null;
-    } catch {
-      return null;
-    }
+    return getCollectionName(route.slug);
   }, [route]);
 
   const [syncing, setSyncing] = useState(false);

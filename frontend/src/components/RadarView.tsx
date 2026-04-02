@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
-import { fetchRadar, fetchTopics } from "../api";
-import type { RadarResponse, RadarCluster, ClusterOutcomes } from "../types";
+import { useState, lazy, Suspense } from "react";
+import { useRadar } from "../hooks/useRadar";
+import { useTopics } from "../hooks/useTopics";
+import type { RadarCluster, ClusterOutcomes } from "../types";
 const BriefingPanel = lazy(() => import("./BriefingPanel"));
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import {
@@ -184,40 +185,9 @@ function ClusterCard({
 }
 
 function RadarView() {
-  const [radar, setRadar] = useState<RadarResponse | null>(null);
-  const [topics, setTopics] = useState<string[]>([]);
-  const [selectedTopic, setSelectedTopic] = useState("");
-  const [loading, setLoading] = useState(true);
+  const { radar, selectedTopic, setSelectedTopic, loading } = useRadar();
+  const topics = useTopics();
   const [selectedBillId, setSelectedBillId] = useState<number | null>(null);
-
-  const loadTopics = useCallback(async () => {
-    try {
-      const data = await fetchTopics();
-      setTopics(data);
-    } catch {
-      /* non-critical */
-    }
-  }, []);
-
-  const loadRadar = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await fetchRadar(selectedTopic || undefined);
-      setRadar(data);
-    } catch {
-      setRadar(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedTopic]);
-
-  useEffect(() => {
-    loadTopics();
-  }, [loadTopics]);
-
-  useEffect(() => {
-    loadRadar();
-  }, [loadRadar]);
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
