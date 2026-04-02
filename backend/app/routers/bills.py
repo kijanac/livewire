@@ -19,6 +19,7 @@ from app.schemas import (
     CityActivity,
     CityCount,
     CityResponse,
+    ClusterOutcomes,
     IngestRequest,
     IngestResponse,
     NewsArticle,
@@ -108,6 +109,83 @@ import time as _time
 _radar_cache: dict[str, tuple[RadarResponse, float]] = {}
 _RADAR_CACHE_TTL = 600  # 10 minutes
 
+# --- Outcome classification for Pattern Intelligence ---
+_PASSED_STATUSES = frozenset({
+    "passed", "adopted", "approved", "enacted", "confirmed", "granted",
+    "passed finally", "passed unsigned by mayor", "passed at full council",
+    "adopted as amended", "granted (with modifications)",
+})
+_FAILED_STATUSES = frozenset({
+    "failed", "denied", "dead", "disallowed", "withdrawn", "vetoed",
+    "failed - end of term", "failed to pass",
+    "died due to expiration of legislative council session",
+})
+
+_VELOCITY_WINDOW_DAYS = 90
+_VELOCITY_MIN_BILLS = 3
+
+
+def _classify_outcome(bill: "Bill") -> str:
+    """Classify a bill as passed/failed/pending from its status."""
+    if bill.passed_date:
+        return "passed"
+    s = (bill.status or "").strip().lower()
+    if s in _PASSED_STATUSES:
+        return "passed"
+    if s in _FAILED_STATUSES:
+        return "failed"
+    return "pending"
+
+
+def _compute_cluster_outcomes(bills: list["Bill"]) -> ClusterOutcomes:
+    """Compute outcome stats for a cluster of bills."""
+    passed = failed = pending = 0
+    resolution_days: list[float] = []
+    intro_dates: list[datetime] = []
+
+    for b in bills:
+        outcome = _classify_outcome(b)
+        if outcome == "passed":
+            passed += 1
+        elif outcome == "failed":
+            failed += 1
+        else:
+            pending += 1
+
+        # Resolution time: intro_date → passed_date (or use a proxy end date)
+        end = b.passed_date or b.enactment_date
+        if b.intro_date and end:
+            delta = (end - b.intro_date).days
+            if delta >= 0:
+                resolution_days.append(delta)
+
+        if b.intro_date:
+            intro_dates.append(b.intro_date)
+
+    avg_days = round(sum(resolution_days) / len(resolution_days), 1) if resolution_days else None
+
+    intro_dates.sort()
+    earliest = intro_dates[0].isoformat() if intro_dates else None
+    latest = intro_dates[-1].isoformat() if intro_dates else None
+    span_days = (intro_dates[-1] - intro_dates[0]).days if len(intro_dates) >= 2 else None
+
+    velocity_flag = (
+        span_days is not None
+        and span_days <= _VELOCITY_WINDOW_DAYS
+        and len(intro_dates) >= _VELOCITY_MIN_BILLS
+    )
+
+    return ClusterOutcomes(
+        passed=passed,
+        failed=failed,
+        pending=pending,
+        avg_days_to_resolution=avg_days,
+        earliest_intro=earliest,
+        latest_intro=latest,
+        intro_span_days=span_days,
+        velocity_flag=velocity_flag,
+    )
+
 
 def _build_radar(topic: str | None, min_cities: int, db: Session) -> RadarResponse:
     """Build radar response with clustering and LLM labels."""
@@ -160,6 +238,8 @@ def _build_radar(topic: str | None, min_cities: int, db: Session) -> RadarRespon
                 url=b.url,
             ))
 
+        outcomes = _compute_cluster_outcomes(cluster_bills_objs)
+
         clusters.append(RadarCluster(
             label=rc["label"],
             top_terms=rc["top_terms"],
@@ -167,53 +247,64 @@ def _build_radar(topic: str | None, min_cities: int, db: Session) -> RadarRespon
             city_count=len(unique_cities),
             bill_count=len(radar_bills),
             bills=radar_bills,
+            outcomes=outcomes,
         ))
         total_bills += len(radar_bills)
 
-    # Generate human-readable cluster labels via LLM
+    # Generate labels + outcome insights via LLM (single call)
     if clusters and settings.OPENROUTER_API_KEY:
         try:
-            import httpx
+            from app.briefing import call_openrouter
 
             cluster_descriptions = []
             for i, c in enumerate(clusters):
                 titles = [b.title[:80] for b in c.bills[:4]]
+                o = c.outcomes
+                outcome_line = ""
+                if o:
+                    outcome_line = (
+                        f"  Outcomes: {o.passed} passed, {o.failed} failed, {o.pending} pending."
+                    )
+                    if o.avg_days_to_resolution is not None:
+                        outcome_line += f" Avg {o.avg_days_to_resolution} days to resolution."
+                    if o.velocity_flag:
+                        outcome_line += (
+                            f" VELOCITY ALERT: {c.bill_count} bills introduced"
+                            f" across {c.city_count} cities in {o.intro_span_days} days."
+                        )
                 cluster_descriptions.append(
-                    f"Cluster {i + 1} ({', '.join(c.cities)}): "
-                    + " | ".join(titles)
+                    f"Cluster {i + 1} ({', '.join(c.cities)}):\n"
+                    f"  Bills: {' | '.join(titles)}\n"
+                    f"{outcome_line}"
                 )
 
             prompt = (
-                "For each cluster of related city council bills below, write a short "
-                "human-readable label (3-6 words) that an organizer would use. "
-                "Return a JSON array of strings, one label per cluster.\n\n"
-                + "\n".join(cluster_descriptions)
+                "You are an intelligence analyst for community organizers tracking "
+                "city council legislation across multiple cities.\n\n"
+                "For each cluster of related bills below:\n"
+                "1. Write a short label (3-6 words) an organizer would use.\n"
+                "2. Write a 1-2 sentence insight about what the outcome pattern means "
+                "for organizers — what happened in other cities, whether this looks "
+                "coordinated, and what to watch for. Be direct and actionable.\n\n"
+                "Return JSON: {\"clusters\": [{\"label\": \"...\", \"insight\": \"...\"}]}\n\n"
+                + "\n\n".join(cluster_descriptions)
             )
 
-            payload = {
-                "model": settings.OPENROUTER_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "response_format": {"type": "json_object"},
-            }
-            headers = {
-                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            }
-
-            with httpx.Client(timeout=30.0) as client:
-                resp = client.post(settings.OPENROUTER_BASE_URL, json=payload, headers=headers)
-                resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
-                parsed = _json.loads(content)
-                labels_list = parsed if isinstance(parsed, list) else parsed.get("labels", [])
-                for i, label in enumerate(labels_list):
-                    if i < len(clusters):
-                        clusters[i].label = str(label)
+            raw = call_openrouter(prompt, temperature=0.2, json_mode=True)
+            parsed = _json.loads(raw)
+            items = parsed.get("clusters", parsed if isinstance(parsed, list) else [])
+            for i, item in enumerate(items):
+                if i < len(clusters):
+                    if isinstance(item, dict):
+                        clusters[i].label = str(item.get("label", clusters[i].label))
+                        if item.get("insight"):
+                            clusters[i].outcomes.insight = str(item["insight"])
+                    elif isinstance(item, str):
+                        clusters[i].label = item
         except Exception as exc:
             logger.warning(
-                "Failed to generate cluster labels",
-                extra={"event": "cluster_label_generation_failed", "error": str(exc)},
+                "Failed to generate cluster labels/insights",
+                extra={"event": "cluster_insight_generation_failed", "error": str(exc)},
             )
 
     return RadarResponse(

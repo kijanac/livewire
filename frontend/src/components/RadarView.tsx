@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { fetchRadar, fetchTopics } from "../api";
-import type { RadarResponse, RadarCluster } from "../types";
+import type { RadarResponse, RadarCluster, ClusterOutcomes } from "../types";
 const BriefingPanel = lazy(() => import("./BriefingPanel"));
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import {
@@ -14,6 +14,68 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getStatusClasses, formatTopic } from "@/lib/bill-utils";
+
+const OUTCOME_INDICATORS = [
+  { key: "passed", color: "bg-green-500", label: "passed" },
+  { key: "failed", color: "bg-red-500", label: "failed" },
+  { key: "pending", color: "bg-amber-400", label: "pending" },
+] as const;
+
+function OutcomeBar({ outcomes }: { outcomes: ClusterOutcomes }) {
+  const total = outcomes.passed + outcomes.failed + outcomes.pending;
+  const pPct = total ? Math.round((outcomes.passed / total) * 100) : 0;
+  const fPct = total ? Math.round((outcomes.failed / total) * 100) : 0;
+
+  return (
+    <div className="px-4 py-3 border-b border-border bg-muted/30 space-y-2">
+      <div className="flex items-center gap-3 text-xs">
+        {OUTCOME_INDICATORS.map(({ key, color, label }) => {
+          const count = outcomes[key];
+          if (!count) return null;
+          return (
+            <span key={key} className="flex items-center gap-1">
+              <span className={cn("inline-block w-2 h-2 rounded-full", color)} />
+              <span className="font-medium text-foreground">{count}</span>
+              <span className="text-muted-foreground">{label}</span>
+            </span>
+          );
+        })}
+        {outcomes.avg_days_to_resolution != null && (
+          <span className="text-muted-foreground ml-auto font-[var(--font-mono)]">
+            ~{outcomes.avg_days_to_resolution < 60
+              ? `${Math.round(outcomes.avg_days_to_resolution)}d`
+              : `${Math.round(outcomes.avg_days_to_resolution / 30)}mo`} avg
+          </span>
+        )}
+      </div>
+
+      {total > 1 && (
+        <div className="flex h-1.5 rounded-full overflow-hidden bg-muted">
+          {pPct > 0 && <div className="bg-green-500" style={{ width: `${pPct}%` }} />}
+          {fPct > 0 && <div className="bg-red-500" style={{ width: `${fPct}%` }} />}
+          <div className="bg-amber-400 flex-1" />
+        </div>
+      )}
+
+      {outcomes.velocity_flag && (
+        <div className="flex items-center gap-1.5 text-xs font-medium text-primary">
+          <svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+          <span>
+            {total} bills in {outcomes.intro_span_days} days — possible coordinated campaign
+          </span>
+        </div>
+      )}
+
+      {outcomes.insight && (
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {outcomes.insight}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function ClusterCard({
   cluster,
@@ -58,6 +120,9 @@ function ClusterCard({
           {cluster.bill_count} bill{cluster.bill_count !== 1 ? "s" : ""}
         </div>
       </CardHeader>
+
+      {/* Outcome indicators */}
+      {cluster.outcomes && <OutcomeBar outcomes={cluster.outcomes} />}
 
       {/* Bills in cluster */}
       <CardContent className="p-0">

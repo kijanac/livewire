@@ -141,6 +141,18 @@ export interface RadarBill {
   url: string | null;
 }
 
+export interface ClusterOutcomes {
+  passed: number;
+  failed: number;
+  pending: number;
+  avg_days_to_resolution: number | null;
+  earliest_intro: string | null;
+  latest_intro: string | null;
+  intro_span_days: number | null;
+  velocity_flag: boolean;
+  insight: string | null;
+}
+
 export interface RadarCluster {
   label: string;
   top_terms: string[];
@@ -148,6 +160,7 @@ export interface RadarCluster {
   city_count: number;
   bill_count: number;
   bills: RadarBill[];
+  outcomes: ClusterOutcomes | null;
 }
 
 export interface RadarResponse {

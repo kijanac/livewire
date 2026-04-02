@@ -186,6 +186,18 @@ class RadarBill(BaseModel):
     url: str | None = None
 
 
+class ClusterOutcomes(BaseModel):
+    passed: int = 0
+    failed: int = 0
+    pending: int = 0
+    avg_days_to_resolution: float | None = None
+    earliest_intro: str | None = None
+    latest_intro: str | None = None
+    intro_span_days: int | None = None
+    velocity_flag: bool = False
+    insight: str | None = None
+
+
 class RadarCluster(BaseModel):
     label: str
     top_terms: list[str]
@@ -193,6 +205,7 @@ class RadarCluster(BaseModel):
     city_count: int
     bill_count: int
     bills: list[RadarBill]
+    outcomes: ClusterOutcomes | None = None
 
 
 class RadarResponse(BaseModel):
