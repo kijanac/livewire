@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import { fetchCoalitions } from "../api";
 import type { CoalitionsResponse, TopicCoalition, CityAlignment } from "../types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
