@@ -281,6 +281,38 @@ export interface BillDocument {
   url: string;
 }
 
+export interface Story {
+  id: number;
+  source_id: number;
+  source_name: string | null;
+  city: string;
+  city_name: string;
+  state: string;
+  title: string;
+  description: string | null;
+  source_url: string;
+  published_at: string | null;
+  relevant: boolean | null;
+  category: string | null;
+  topics: string[];
+  analysis: string | null;
+  enriched_at: string | null;
+  created_at: string | null;
+}
+
+export interface StoryListResponse {
+  stories: Story[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface StoryFilters {
+  city: string;
+  category: string;
+  topic: string;
+}
+
 export interface BillBriefing {
   bill: Bill;
   summary: string | null;

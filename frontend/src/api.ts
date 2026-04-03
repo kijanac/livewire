@@ -10,6 +10,8 @@ import type {
   CollectionItem,
   RadarResponse,
   CoalitionsResponse,
+  StoryListResponse,
+  StoryFilters,
 } from "./types";
 
 const BASE_URL = "";
@@ -209,6 +211,32 @@ export async function updateCollectionItem(
     throw new Error(
       `Failed to update collection item: ${response.statusText}`
     );
+  }
+  return response.json();
+}
+
+interface FetchStoriesParams extends Partial<StoryFilters> {
+  page?: number;
+  per_page?: number;
+}
+
+export async function fetchStories(
+  params: FetchStoriesParams = {}
+): Promise<StoryListResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params.city) searchParams.set("city", params.city);
+  if (params.category) searchParams.set("category", params.category);
+  if (params.topic) searchParams.set("topic", params.topic);
+  if (params.page) searchParams.set("page", String(params.page));
+  if (params.per_page) searchParams.set("per_page", String(params.per_page));
+
+  const query = searchParams.toString();
+  const url = `${BASE_URL}/api/stories${query ? `?${query}` : ""}`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch stories: ${response.statusText}`);
   }
   return response.json();
 }
