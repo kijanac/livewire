@@ -11,4 +11,5 @@ dependencies = [
     "apscheduler>=3.10.4",
     "pydantic-settings>=2.5.0",
     "numpy>=1.26.0",
+    "feedparser>=6.0.0",
 ]

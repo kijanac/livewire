@@ -58,6 +58,22 @@ class Settings(BaseSettings):
         "kingcounty": {"name": "King County", "state": "WA"},
     }
 
+    NEWS_SOURCES: dict = {
+        "chicago": [
+            {"name": "Chicago Sun-Times", "feed_url": "https://chicago.suntimes.com/rss/index.xml"},
+            {"name": "Block Club Chicago", "feed_url": "https://blockclubchicago.org/feed/"},
+        ],
+        "detroit": [
+            {"name": "Detroit Free Press", "feed_url": "https://www.freep.com/arcio/rss/"},
+        ],
+        "seattle": [
+            {"name": "The Urbanist", "feed_url": "https://www.theurbanist.org/feed/"},
+        ],
+        "minneapolismn": [
+            {"name": "Minnesota Reformer", "feed_url": "https://minnesotareformer.com/feed/"},
+        ],
+    }
+
     model_config = {"env_file": ("../.env", ".env"), "extra": "ignore"}
 
 

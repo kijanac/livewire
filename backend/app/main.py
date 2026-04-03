@@ -4,6 +4,7 @@ import os
 import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
@@ -13,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import SessionLocal, init_db
 from app.ingesters.legistar import LegistarIngester
-from app.routers import bills, collections
+from app.routers import bills, collections, stories
 
 logging.basicConfig(
     level=logging.INFO,
@@ -126,6 +127,123 @@ def run_ingestion_all_cities() -> None:
 
         gc.collect()
 
+    # --- Story ingestion pipeline ---
+    _ingest_stories()
+
+
+def _sync_story_sources(session: SessionLocal) -> None:
+    """Ensure configured NEWS_SOURCES exist as StorySource rows."""
+    from app.models import StorySource
+
+    for city_key, feeds in settings.NEWS_SOURCES.items():
+        city_config = settings.CITIES.get(city_key)
+        if not city_config:
+            continue
+        for feed in feeds:
+            exists = (
+                session.query(StorySource.id)
+                .filter(StorySource.feed_url == feed["feed_url"])
+                .first()
+            )
+            if not exists:
+                session.add(StorySource(
+                    city=city_key,
+                    city_name=city_config["name"],
+                    state=city_config["state"],
+                    name=feed["name"],
+                    feed_url=feed["feed_url"],
+                ))
+    session.commit()
+
+
+_STORY_RETENTION_DAYS = 90
+
+
+def _ingest_stories() -> None:
+    """Fetch RSS feeds, triage, enrich relevant stories, and prune old ones."""
+    from app.ingesters.rss import RSSIngester
+    from app.models import Story, StorySource
+
+    session = SessionLocal()
+    try:
+        _sync_story_sources(session)
+
+        sources = session.query(StorySource).filter(StorySource.is_active.is_(True)).all()
+        total_added = 0
+        for source in sources:
+            ingester = RSSIngester(source)
+            added, _ = ingester.ingest(session)
+            total_added += added
+
+        logger.info(
+            "Story RSS ingestion completed",
+            extra={"event": "story_rss_ingestion_completed", "stories_added": total_added},
+        )
+    except Exception:
+        logger.exception(
+            "Story RSS ingestion failed",
+            extra={"event": "story_rss_ingestion_failed"},
+        )
+    finally:
+        session.close()
+
+    gc.collect()
+
+    # Triage + enrich
+    if settings.OPENROUTER_API_KEY:
+        from app.story_classifier import enrich_all_stories, triage_all_stories
+
+        session = SessionLocal()
+        try:
+            triaged = triage_all_stories(session)
+            logger.info(
+                "Story triage completed",
+                extra={"event": "story_triage_pipeline_completed", "stories_triaged": triaged},
+            )
+        except Exception:
+            logger.exception(
+                "Story triage failed",
+                extra={"event": "story_triage_pipeline_failed"},
+            )
+        finally:
+            session.close()
+
+        session = SessionLocal()
+        try:
+            enriched = enrich_all_stories(session)
+            logger.info(
+                "Story enrichment completed",
+                extra={"event": "story_enrichment_pipeline_completed", "stories_enriched": enriched},
+            )
+        except Exception:
+            logger.exception(
+                "Story enrichment failed",
+                extra={"event": "story_enrichment_pipeline_failed"},
+            )
+        finally:
+            session.close()
+
+        gc.collect()
+
+    # Prune old stories
+    session = SessionLocal()
+    try:
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=_STORY_RETENTION_DAYS)
+        deleted = session.query(Story).filter(Story.created_at < cutoff).delete()
+        session.commit()
+        if deleted:
+            logger.info(
+                "Old stories pruned",
+                extra={"event": "story_retention_pruned", "deleted": deleted},
+            )
+    except Exception:
+        logger.exception(
+            "Story retention pruning failed",
+            extra={"event": "story_retention_failed"},
+        )
+    finally:
+        session.close()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -159,7 +277,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Scheduler shut down", extra={"event": "scheduler_shutdown"})
 
 
-app = FastAPI(title="Bill Tracker", lifespan=lifespan)
+app = FastAPI(title="Livewire", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -171,6 +289,7 @@ app.add_middleware(
 
 app.include_router(bills.router)
 app.include_router(collections.router)
+app.include_router(stories.router)
 
 # Mount static files for frontend if the directory exists
 static_dir = os.path.join(os.path.dirname(__file__), "..", "static")

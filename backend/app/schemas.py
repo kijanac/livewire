@@ -4,6 +4,18 @@ from datetime import datetime
 from pydantic import BaseModel, field_validator
 
 
+def _parse_json_list(v: object) -> list[str]:
+    """Parse a JSON-encoded list string into a Python list."""
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if v is None:
+        return []
+    return v  # type: ignore[return-value]
+
+
 class BillResponse(BaseModel):
     id: int
     source_id: str
@@ -33,14 +45,7 @@ class BillResponse(BaseModel):
     @field_validator("topics", mode="before")
     @classmethod
     def parse_topics(cls, v: object) -> list[str]:
-        if isinstance(v, str):
-            try:
-                return json.loads(v)
-            except (json.JSONDecodeError, TypeError):
-                return []
-        if v is None:
-            return []
-        return v  # type: ignore[return-value]
+        return _parse_json_list(v)
 
 
 class BillListResponse(BaseModel):
@@ -337,6 +342,42 @@ class NarrativeSection(BaseModel):
     opposition_narrative: str | None = None
     narrative_trajectory: str | None = None
     talking_points: list[str] = []
+
+
+# --- Story schemas ---
+
+
+class StoryResponse(BaseModel):
+    id: int
+    source_id: int
+    source_name: str | None = None
+    city: str
+    city_name: str
+    state: str
+    title: str
+    description: str | None = None
+    source_url: str
+    published_at: datetime | None = None
+    relevant: bool | None = None
+    category: str | None = None
+    topics: list[str] = []
+    analysis: str | None = None
+    enriched_at: datetime | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("topics", mode="before")
+    @classmethod
+    def parse_topics(cls, v: object) -> list[str]:
+        return _parse_json_list(v)
+
+
+class StoryListResponse(BaseModel):
+    stories: list[StoryResponse]
+    total: int
+    page: int
+    per_page: int
 
 
 class BillBriefingResponse(BaseModel):

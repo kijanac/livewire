@@ -39,14 +39,21 @@ Respond with ONLY the JSON object."""
 def call_openrouter(
     prompt: str,
     *,
+    system_prompt: str | None = None,
     temperature: float = 0.3,
     max_tokens: int | None = None,
     json_mode: bool = False,
+    timeout: float = 45.0,
 ) -> str:
     """Call OpenRouter and return the raw content string."""
+    messages: list[dict] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
     payload: dict = {
         "model": settings.OPENROUTER_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "temperature": temperature,
     }
     if max_tokens:
@@ -58,7 +65,7 @@ def call_openrouter(
         "Content-Type": "application/json",
     }
 
-    with httpx.Client(timeout=45.0) as client:
+    with httpx.Client(timeout=timeout) as client:
         response = client.post(
             settings.OPENROUTER_BASE_URL,
             json=payload,

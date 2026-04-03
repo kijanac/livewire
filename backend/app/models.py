@@ -237,6 +237,75 @@ class VoteRecord(Base):
         return f"<VoteRecord(id={self.id}, bill_id={self.bill_id}, vote={self.vote_value})>"
 
 
+class StorySource(Base):
+    __tablename__ = "story_sources"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    city = Column(String, nullable=False)
+    city_name = Column(String, nullable=False)
+    state = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    feed_url = Column(String, unique=True, nullable=False)
+    is_active = Column(Boolean, default=True)
+    last_fetched = Column(DateTime, nullable=True)
+    fetch_count = Column(Integer, default=0)
+    error_count = Column(Integer, default=0)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    stories = relationship("Story", back_populates="source")
+
+    __table_args__ = (
+        Index("ix_story_sources_city", "city"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<StorySource(id={self.id}, name={self.name}, city={self.city})>"
+
+
+class Story(Base):
+    __tablename__ = "stories"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_id = Column(
+        Integer,
+        ForeignKey("story_sources.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    city = Column(String, nullable=False)
+    city_name = Column(String, nullable=False)
+    state = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    source_url = Column(String, unique=True, nullable=False)
+    published_at = Column(DateTime, nullable=True)
+
+    # Stage 1: LLM triage
+    relevant = Column(Boolean, nullable=True)  # null = unclassified
+    category = Column(String, nullable=True)
+    topics = Column(Text, nullable=True)  # JSON list, same taxonomy as bills
+    classified_at = Column(DateTime, nullable=True)
+
+    # Stage 2: deep fetch + analysis (only if relevant)
+    body = Column(Text, nullable=True)
+    analysis = Column(Text, nullable=True)
+    enriched_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    source = relationship("StorySource", back_populates="stories")
+
+    __table_args__ = (
+        Index("ix_stories_city", "city"),
+        Index("ix_stories_published_at", "published_at"),
+        Index("ix_stories_relevant", "relevant"),
+        Index("ix_stories_category", "category"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Story(id={self.id}, city={self.city}, title={self.title[:40]})>"
+
+
 class BillAction(Base):
     __tablename__ = "bill_actions"
 
