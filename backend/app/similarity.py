@@ -183,39 +183,48 @@ def _scan_similar(
     return [(bid, score) for score, bid in sorted(top_n, reverse=True)]
 
 
+_SIMILAR_BATCH = 50
+
+
 def compute_all_similar(session=None) -> int:
     """Pre-compute similar bills for all embeddings missing a cache.
     Call after embed_unembedded_bills() in the ingestion pipeline.
+    Processes in batches to stay within memory limits.
     """
     own_session = session is None
     if own_session:
         session = SessionLocal()
 
     try:
-        uncached = (
-            session.query(BillEmbedding)
-            .filter(BillEmbedding.similar_json.is_(None))
-            .all()
-        )
-        if not uncached:
-            return 0
-
         count = 0
-        for emb in uncached:
-            try:
-                similar = _scan_similar(session, emb, _SIMILAR_N)
-                emb.similar_json = json.dumps(similar)
-                count += 1
-                if count % 50 == 0:
-                    session.commit()
-                    time.sleep(0.1)
-            except Exception as exc:
-                logger.error(
-                    "Similar computation failed",
-                    extra={"event": "similar_computation_failed", "bill_id": emb.bill_id, "error": str(exc)},
-                )
+        while True:
+            batch = (
+                session.query(BillEmbedding)
+                .filter(BillEmbedding.similar_json.is_(None))
+                .limit(_SIMILAR_BATCH)
+                .all()
+            )
+            if not batch:
+                break
 
-        session.commit()
+            for emb in batch:
+                try:
+                    similar = _scan_similar(session, emb, _SIMILAR_N)
+                    emb.similar_json = json.dumps(similar)
+                    count += 1
+                except Exception as exc:
+                    logger.error(
+                        "Similar computation failed",
+                        extra={"event": "similar_computation_failed", "bill_id": emb.bill_id, "error": str(exc)},
+                    )
+
+            session.commit()
+            # Evict processed objects from the session identity map
+            for emb in batch:
+                session.expire(emb)
+            del batch
+            time.sleep(0.1)
+
         logger.info(
             "Similar bills pre-computed",
             extra={"event": "similar_precomputed", "count": count},

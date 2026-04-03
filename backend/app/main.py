@@ -1,3 +1,4 @@
+import gc
 import logging
 import os
 import threading
@@ -106,6 +107,8 @@ def run_ingestion_all_cities() -> None:
                 extra={"event": "post_ingestion_embeddings_failed"},
             )
 
+        gc.collect()
+
         try:
             precomputed = compute_all_similar()
             logger.info(
@@ -120,6 +123,8 @@ def run_ingestion_all_cities() -> None:
                 "Post-ingestion similar computation failed",
                 extra={"event": "post_ingestion_similar_failed"},
             )
+
+        gc.collect()
 
 
 @asynccontextmanager

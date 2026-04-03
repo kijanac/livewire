@@ -2,7 +2,7 @@ import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.models import Bill, Collection, CollectionItem
@@ -23,7 +23,12 @@ router = APIRouter(prefix="/api/collections", tags=["collections"])
 
 def _get_collection_by_slug(db: Session, slug: str) -> Collection:
     """Look up a collection by slug or raise 404."""
-    collection = db.query(Collection).filter(Collection.slug == slug).first()
+    collection = (
+        db.query(Collection)
+        .options(selectinload(Collection.items).selectinload(CollectionItem.bill))
+        .filter(Collection.slug == slug)
+        .first()
+    )
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
     return collection

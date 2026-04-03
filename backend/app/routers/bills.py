@@ -117,8 +117,9 @@ def get_upcoming_bills(
 # Radar response cache: keyed by topic, stores (response, timestamp)
 import time as _time
 
-_radar_cache: dict[str, tuple[RadarResponse, float]] = {}
 _RADAR_CACHE_TTL = 600  # 10 minutes
+_RADAR_CACHE_MAX = 5  # keep at most 5 topic variants in memory
+_radar_cache: dict[str, tuple[RadarResponse, float]] = {}
 
 # --- Outcome classification for Pattern Intelligence ---
 _PASSED_STATUSES = frozenset({
@@ -338,6 +339,10 @@ def get_bill_radar(
 
     response = _build_radar(topic, min_cities, db)
     _radar_cache[cache_key] = (response, now)
+    # Evict oldest entries if cache is too large
+    if len(_radar_cache) > _RADAR_CACHE_MAX:
+        oldest_key = min(_radar_cache, key=lambda k: _radar_cache[k][1])
+        del _radar_cache[oldest_key]
     return response
 
 

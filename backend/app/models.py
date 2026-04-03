@@ -77,7 +77,7 @@ class Collection(Base):
         "CollectionItem",
         back_populates="collection",
         cascade="all, delete-orphan",
-        lazy="joined",
+        lazy="select",
     )
 
     def __repr__(self) -> str:
@@ -102,7 +102,7 @@ class CollectionItem(Base):
     added_at = Column(DateTime, server_default=func.now())
 
     collection = relationship("Collection", back_populates="items")
-    bill = relationship("Bill", lazy="joined")
+    bill = relationship("Bill", lazy="select")
 
     __table_args__ = (
         UniqueConstraint("collection_id", "bill_id", name="uq_collection_bill"),
@@ -132,7 +132,7 @@ class BillBriefing(Base):
     coalition_json = Column(Text, nullable=True)  # JSON: cached coalition brief
     generated_at = Column(DateTime, server_default=func.now())
 
-    bill = relationship("Bill", lazy="joined")
+    bill = relationship("Bill", lazy="select")
 
     def __repr__(self) -> str:
         return f"<BillBriefing(id={self.id}, bill_id={self.bill_id})>"
