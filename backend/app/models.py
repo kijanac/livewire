@@ -34,6 +34,7 @@ class Bill(Base):
     city = Column(String, nullable=False)
     city_name = Column(String, nullable=False)
     state = Column(String, nullable=False)
+    jurisdiction_level = Column(String, nullable=False, default="city")
     file_number = Column(String, nullable=True)
     title = Column(String, nullable=False)
     type_name = Column(String, nullable=True)
@@ -57,6 +58,7 @@ class Bill(Base):
         Index("ix_bills_type_name", "type_name"),
         Index("ix_bills_intro_date", "intro_date"),
         Index("ix_bills_agenda_date", "agenda_date"),
+        Index("ix_bills_jurisdiction_level", "jurisdiction_level"),
     )
 
     def __repr__(self) -> str:

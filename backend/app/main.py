@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import SessionLocal, init_db
 from app.ingesters.legistar import LegistarIngester
+from app.ingesters.openstates import OpenStatesIngester
 from app.routers import bills, collections, stories
 
 logging.basicConfig(
@@ -66,6 +67,39 @@ def run_ingestion_all_cities() -> None:
         "Scheduled ingestion finished for all cities",
         extra={"event": "scheduled_ingestion_finished"},
     )
+
+    # --- State legislatures via OpenStates ---
+    if settings.OPENSTATES_API_KEY:
+        for state_code, state_config in settings.STATES.items():
+            ingester = OpenStatesIngester(
+                state_code=state_code,
+                state_name=state_config["name"],
+                base_url=settings.OPENSTATES_BASE_URL,
+                api_key=settings.OPENSTATES_API_KEY,
+            )
+            session = SessionLocal()
+            try:
+                added, updated = ingester.ingest(session)
+                logger.info(
+                    "Scheduled OpenStates ingestion completed for state",
+                    extra={
+                        "event": "scheduled_openstates_state_completed",
+                        "state": state_code,
+                        "bills_added": added,
+                        "bills_updated": updated,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Scheduled OpenStates ingestion failed for state",
+                    extra={
+                        "event": "scheduled_openstates_state_failed",
+                        "state": state_code,
+                    },
+                )
+            finally:
+                session.close()
+        gc.collect()
 
     # Run topic tagging on any untagged bills
     if settings.OPENROUTER_API_KEY:

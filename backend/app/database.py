@@ -38,6 +38,10 @@ def init_db() -> None:
             conn.execute(text("ALTER TABLE bills ADD COLUMN topics TEXT"))
         if "enriched_at" not in existing_bill_cols:
             conn.execute(text("ALTER TABLE bills ADD COLUMN enriched_at DATETIME"))
+        if "jurisdiction_level" not in existing_bill_cols:
+            conn.execute(
+                text("ALTER TABLE bills ADD COLUMN jurisdiction_level TEXT NOT NULL DEFAULT 'city'")
+            )
 
     if "bill_briefings" in inspector.get_table_names():
         existing_briefing_cols = {col["name"] for col in inspector.get_columns("bill_briefings")}

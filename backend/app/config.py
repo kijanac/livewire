@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     OPENROUTER_MODEL: str = "google/gemini-3-flash-preview"
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1/chat/completions"
 
+    OPENSTATES_API_KEY: str = ""
+    OPENSTATES_BASE_URL: str = "https://v3.openstates.org"
+
     CITIES: dict = {
         # Major metros
         "chicago": {"name": "Chicago", "state": "IL"},
@@ -56,6 +59,32 @@ class Settings(BaseSettings):
         "jonesboro": {"name": "Jonesboro", "state": "AR"},
         # Counties
         "kingcounty": {"name": "King County", "state": "WA"},
+    }
+
+    STATES: dict = {
+        "AR": {"name": "Arkansas"},
+        "AZ": {"name": "Arizona"},
+        "CA": {"name": "California"},
+        "CO": {"name": "Colorado"},
+        "FL": {"name": "Florida"},
+        "IL": {"name": "Illinois"},
+        "KY": {"name": "Kentucky"},
+        "MA": {"name": "Massachusetts"},
+        "MD": {"name": "Maryland"},
+        "MI": {"name": "Michigan"},
+        "MN": {"name": "Minnesota"},
+        "MO": {"name": "Missouri"},
+        "NC": {"name": "North Carolina"},
+        "NJ": {"name": "New Jersey"},
+        "NM": {"name": "New Mexico"},
+        "OH": {"name": "Ohio"},
+        "PA": {"name": "Pennsylvania"},
+        "RI": {"name": "Rhode Island"},
+        "TN": {"name": "Tennessee"},
+        "TX": {"name": "Texas"},
+        "VA": {"name": "Virginia"},
+        "WA": {"name": "Washington"},
+        "WI": {"name": "Wisconsin"},
     }
 
     NEWS_SOURCES: dict = {
