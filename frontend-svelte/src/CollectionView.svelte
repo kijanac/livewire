@@ -90,7 +90,7 @@
             <Input
               type="text"
               value={editState.value ?? ""}
-              oninput={(e) => { const t = e.currentTarget as HTMLInputElement; editState = { kind: "name", value: t.value }; }}
+              oninput={(e) => (editState.value = e.currentTarget.value)}
               onblur={handleSaveName}
               onkeydown={(e) => {
                 if (e.key === "Enter") handleSaveName();
@@ -110,7 +110,7 @@
           {#if isEditingDesc}
             <textarea
               value={editState.value ?? ""}
-              oninput={(e) => { const t = e.currentTarget as HTMLTextAreaElement; editState = { kind: "desc", value: t.value }; }}
+              oninput={(e) => (editState.value = e.currentTarget.value)}
               onblur={handleSaveDesc}
               onkeydown={(e) => {
                 if (e.key === "Escape") editState = { kind: "idle" };
@@ -213,7 +213,7 @@
               {#if isEditingNote}
                 <textarea
                   value={editState.value ?? ""}
-                  oninput={(e) => { const t = e.currentTarget as HTMLTextAreaElement; editState = { kind: "note", itemId: item.id, value: t.value }; }}
+                  oninput={(e) => (editState.value = e.currentTarget.value)}
                   onblur={() => handleSaveNote(item.id, (editState as { value: string }).value)}
                   onkeydown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {

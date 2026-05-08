@@ -1,1 +1,0 @@
-import{T as e,w as t}from"./api-D4ue0wcn.js";import{n}from"./index-Bt0t-WKu.js";function r(r,i){let a=t(i,[`$$slots`,`$$events`,`$$legacy`]),o=[[`path`,{d:`M15 3h6v6`}],[`path`,{d:`M10 14 21 3`}],[`path`,{d:`M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6`}]];n(r,e({name:`external-link`},()=>a,{get iconNode(){return o}}))}export{r as t};

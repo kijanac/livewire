@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from "@/components/ui/button";
   import Spinner from "./components/Spinner.svelte";
+  import ToastProvider from "./components/ToastProvider.svelte";
   import { triggerIngest } from "@/api";
   import { getCollectionName } from "@/hooks/use-collection-stubs.svelte";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
@@ -77,6 +78,7 @@
   );
 </script>
 
+<ToastProvider>
 <div class="min-h-screen bg-background">
   <header class="sticky top-0 z-10 border-b-2 border-primary bg-card">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -147,3 +149,4 @@
     </div>
   {/await}
 </div>
+</ToastProvider>

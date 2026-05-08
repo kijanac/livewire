@@ -52,7 +52,7 @@
       <Input
         type="text"
         value={filters.search}
-        oninput={(e) => { const t = e.currentTarget as HTMLInputElement; update("search", t.value); }}
+        oninput={(e) => update("search", e.currentTarget.value)}
         placeholder="Search by keyword..."
         class="w-full pl-9"
       />

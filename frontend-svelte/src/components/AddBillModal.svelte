@@ -34,8 +34,7 @@
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground z-10" aria-hidden="true" />
         <Input
           type="text"
-          value={billSearch.search}
-          oninput={(e) => { const t = e.currentTarget as HTMLInputElement; billSearch.search = t.value; }}
+          bind:value={billSearch.search}
           placeholder="Search by keyword, city, or bill number..."
           autofocus
           class="pl-9"

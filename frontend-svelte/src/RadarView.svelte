@@ -20,6 +20,12 @@
   const radarStore = createRadar();
   const { topics } = createTopics();
   let selectedBillId = $state<number | null>(null);
+  let expandedClusters = $state(new Set<string>());
+  function toggleCluster(label: string) {
+    expandedClusters = new Set(expandedClusters);
+    if (expandedClusters.has(label)) expandedClusters.delete(label);
+    else expandedClusters.add(label);
+  }
 
   const CLEAR = "__clear__";
 </script>
@@ -148,7 +154,7 @@
 
             <!-- Bills in cluster -->
             <CardContent class="p-0">
-              {#each cluster.bills.slice(0, /* expanded handled inline for now */ 6) as bill (bill.id)}
+              {#each cluster.bills.slice(0, expandedClusters.has(cluster.label) ? undefined : 6) as bill (bill.id)}
                 <Button
                   variant="ghost"
                   onclick={() => (selectedBillId = bill.id)}
@@ -178,6 +184,13 @@
                   </div>
                 </Button>
               {/each}
+
+              {#if cluster.bills.length > 6 && !expandedClusters.has(cluster.label)}
+                <Button variant="ghost" onclick={() => toggleCluster(cluster.label)}
+                  class="w-full px-4 py-2 text-xs text-primary hover:bg-primary/5 transition-colors rounded-none border-t border-border">
+                  Show {cluster.bills.length - 6} more
+                </Button>
+              {/if}
             </CardContent>
           </Card>
         </div>
