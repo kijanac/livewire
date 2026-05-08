@@ -5,6 +5,10 @@
   import { formatDate } from "@/lib/bill-utils";
   import type { PowerSection } from "@/types";
 
+  function colorKey(vote: string): keyof typeof VOTE_COLORS {
+    return vote === "yea" ? "yea" : vote === "nay" ? "nay" : "other";
+  }
+
   let { power }: { power: PowerSection | null } = $props();
 </script>
 
@@ -45,7 +49,6 @@
             {#if v.absent > 0}<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full {VOTE_COLORS.other}" /> Absent {v.absent}</span>{/if}
           </div>
           {#if v.records.length > 0}
-            {@const colorKey = (vote: string) => vote === "yea" ? "yea" : vote === "nay" ? "nay" : "other" as keyof typeof VOTE_COLORS}
             <details class="mt-2">
               <summary class="text-xs text-primary cursor-pointer hover:text-primary/80">Show individual votes ({v.records.length})</summary>
               <div class="mt-1.5 grid grid-cols-2 gap-1">

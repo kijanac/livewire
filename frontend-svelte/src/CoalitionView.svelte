@@ -1,20 +1,18 @@
 <script lang="ts">
   import { createCoalitions } from "@/hooks/use-coalitions.svelte";
+  import { useErrorToast } from "@/hooks/use-error-toast.svelte";
   import type { TopicCoalition, CityAlignment } from "@/types";
   import { Card, CardHeader, CardContent } from "@/components/ui/card";
   import { Button } from "@/components/ui/button";
   import Spinner from "./components/Spinner.svelte";
   import { cn } from "@/lib/utils";
   import { CITY_STAGGER_MS, MOMENTUM_CONFIG } from "@/lib/visual-tokens";
+  import { SvelteSet } from "svelte/reactivity";
 
-  const { data, loading, error } = createCoalitions();
+  const coalitionsStore = createCoalitions();
+  useErrorToast(coalitionsStore.error, "Failed to load coalitions");
 
-  let expandedTopics = $state<Set<string>>(new Set());
-  function toggleExpanded(topic: string) {
-    if (expandedTopics.has(topic)) expandedTopics.delete(topic);
-    else expandedTopics.add(topic);
-    expandedTopics = new Set(expandedTopics);
-  }
+  let expandedTopics = new SvelteSet<string>();
 </script>
 
 <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -23,20 +21,20 @@
     <p class="text-sm text-muted-foreground mt-1">See which cities are aligned on the issues you care about</p>
   </div>
 
-  {#if loading}
+  {#if coalitionsStore.loading}
     <div class="flex flex-col items-center justify-center py-16 gap-3">
       <Spinner size={24} class="text-primary" />
       <span class="text-sm text-muted-foreground">Mapping alliances...</span>
     </div>
-  {:else if data && data.topics.length > 0}
+  {:else if coalitionsStore.data && coalitionsStore.data.topics.length > 0}
     <div class="flex items-center gap-4 mb-4 text-xs text-muted-foreground">
-      <span class="font-[var(--font-mono)]">{data.total_topics} issues tracked</span>
+      <span class="font-[var(--font-mono)]">{coalitionsStore.data.total_topics} issues tracked</span>
       <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-500" /> Advancing</span>
       <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500" /> Stalled</span>
       <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-400" /> Stable</span>
     </div>
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {#each data.topics as topic, i (topic.topic)}
+      {#each coalitionsStore.data.topics as topic, i (topic.topic)}
         {@const total = topic.total_passed + topic.total_failed + topic.total_pending}
         {@const pPct = total ? Math.round((topic.total_passed / total) * 100) : 0}
         {@const fPct = total ? Math.round((topic.total_failed / total) * 100) : 0}
@@ -108,7 +106,7 @@
               </div>
 
               {#if topic.cities.length > 6 && !expanded}
-                <Button variant="ghost" onclick={() => toggleExpanded(topic.topic)}
+                <Button variant="ghost" onclick={() => expandedTopics.add(topic.topic)}
                   class="w-full px-4 py-2 text-xs text-primary hover:bg-primary/5 transition-colors rounded-none border-t border-border">
                   Show {topic.cities.length - 6} more cities
                 </Button>

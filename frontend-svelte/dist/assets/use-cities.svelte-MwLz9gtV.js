@@ -1,1 +1,0 @@
-import{_t as e,it as t,o as n,ut as r,xt as i,yt as a}from"./api-D4ue0wcn.js";function o(){let o=i(e([]));return r(()=>{let e=new AbortController;return n(e.signal).then(e=>{a(o,e,!0)}).catch(e=>{e.name!==`AbortError`&&console.error(`fetchCities failed`,e)}),()=>e.abort()}),{get cities(){return t(o)}}}export{o as t};

@@ -5,7 +5,7 @@
 </script>
 
 <svg
-  class={cn("animate-spin", className)}
+  class={cn("animate-spin motion-reduce:animate-none", className)}
   style="width: {size}px; height: {size}px"
   viewBox="0 0 24 24"
   fill="none"

@@ -1,7 +1,6 @@
 import { getContext } from "svelte";
+import { TOAST_KEY } from "@/lib/toast-key";
 import type { ToastContextValue } from "@/components/ToastProvider.svelte";
-
-const TOAST_KEY = Symbol("toast");
 
 export function useToast(): ToastContextValue {
   return getContext<ToastContextValue>(TOAST_KEY);

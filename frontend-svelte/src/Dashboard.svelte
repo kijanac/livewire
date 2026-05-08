@@ -9,6 +9,7 @@
   import { createCities } from "@/hooks/use-cities.svelte";
   import { createTopics } from "@/hooks/use-topics.svelte";
   import { createUpcoming } from "@/hooks/use-upcoming.svelte";
+  import { useErrorToast } from "@/hooks/use-error-toast.svelte";
 
   let { refreshKey = 0 }: { refreshKey?: number } = $props();
 
@@ -18,6 +19,10 @@
   const { cities } = createCities();
   const { topics } = createTopics();
   const upcomingStore = createUpcoming(keyRef);
+
+  useErrorToast(billsStore.error, "Failed to load bills");
+  useErrorToast(statsStore.error, "Failed to load stats");
+  useErrorToast(upcomingStore.error, "Failed to load upcoming bills");
 </script>
 
 <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { setContext, getContext } from "svelte";
+  import { setContext } from "svelte";
   import { cn } from "@/lib/utils";
+  import { TOAST_KEY } from "@/lib/toast-key";
   import X from "@lucide/svelte/icons/x";
 
   export type ToastTone = "error" | "info" | "success";
@@ -15,7 +16,6 @@
     showToast: (message: string, tone?: ToastTone) => void;
   }
 
-  const TOAST_KEY = Symbol("toast");
   const TOAST_DURATION_MS = 5000;
 
   const toneClasses: Record<ToastTone, string> = {

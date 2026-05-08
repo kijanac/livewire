@@ -6,6 +6,15 @@
   import { getCollectionName } from "@/hooks/use-collection-stubs.svelte";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
 
+  // Module-level lazy imports — cached so route changes don't re-create promises
+  const pages = {
+    radar: () => import("./RadarView.svelte"),
+    allies: () => import("./CoalitionView.svelte"),
+    intel: () => import("./StoriesView.svelte"),
+    collection: () => import("./CollectionView.svelte"),
+    dashboard: () => import("./Dashboard.svelte"),
+  };
+
   type Route =
     | { page: "dashboard" }
     | { page: "collection"; slug: string }
@@ -64,18 +73,7 @@
     }`;
   }
 
-  // Lazily load view components
-  let viewModule = $derived(
-    route.page === "radar"
-      ? import("./RadarView.svelte")
-      : route.page === "allies"
-        ? import("./CoalitionView.svelte")
-        : route.page === "intel"
-          ? import("./StoriesView.svelte")
-          : route.page === "collection"
-            ? import("./CollectionView.svelte")
-            : import("./Dashboard.svelte")
-  );
+  let viewModule = $derived(pages[route.page]());
 </script>
 
 <ToastProvider>
@@ -142,7 +140,13 @@
   </header>
 
   {#await viewModule then mod}
-    <mod.default refreshKey={refreshKey} slug={route.page === "collection" ? route.slug : undefined} />
+    {#if route.page === "dashboard"}
+      <mod.default refreshKey={refreshKey} />
+    {:else if route.page === "collection"}
+      <mod.default slug={route.slug} />
+    {:else}
+      <mod.default />
+    {/if}
   {:catch err}
     <div class="flex items-center justify-center py-24">
       <p class="text-destructive">Failed to load page: {err.message}</p>

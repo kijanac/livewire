@@ -1,0 +1,1 @@
+import{Ct as e,ft as t,o as n,ot as r,xt as i,yt as a}from"./api-DaD11tpH.js";function o(){let o=e(a([]));return t(()=>{let e=new AbortController;return n(e.signal).then(e=>{i(o,e,!0)}).catch(e=>{e.name!==`AbortError`&&console.error(`fetchCities failed`,e)}),()=>e.abort()}),{get cities(){return r(o)}}}export{o as t};

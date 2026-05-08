@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createRadar } from "@/hooks/use-radar.svelte";
   import { createTopics } from "@/hooks/use-topics.svelte";
+  import { useErrorToast } from "@/hooks/use-error-toast.svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import type { RadarCluster, ClusterOutcomes } from "@/types";
   import { Card, CardHeader, CardContent } from "@/components/ui/card";
   import {
@@ -19,13 +21,9 @@
 
   const radarStore = createRadar();
   const { topics } = createTopics();
+  useErrorToast(radarStore.error, "Failed to load radar");
   let selectedBillId = $state<number | null>(null);
-  let expandedClusters = $state(new Set<string>());
-  function toggleCluster(label: string) {
-    expandedClusters = new Set(expandedClusters);
-    if (expandedClusters.has(label)) expandedClusters.delete(label);
-    else expandedClusters.add(label);
-  }
+  let expandedClusters = new SvelteSet<string>();
 
   const CLEAR = "__clear__";
 </script>
@@ -186,7 +184,7 @@
               {/each}
 
               {#if cluster.bills.length > 6 && !expandedClusters.has(cluster.label)}
-                <Button variant="ghost" onclick={() => toggleCluster(cluster.label)}
+                <Button variant="ghost" onclick={() => expandedClusters.add(cluster.label)}
                   class="w-full px-4 py-2 text-xs text-primary hover:bg-primary/5 transition-colors rounded-none border-t border-border">
                   Show {cluster.bills.length - 6} more
                 </Button>

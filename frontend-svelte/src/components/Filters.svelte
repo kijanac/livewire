@@ -37,7 +37,7 @@
     onChange({ ...filters, [field]: value });
   }
 
-  const moreFiltersActive = !!(filters.status || filters.type_name || filters.urgency);
+  let moreFiltersActive = $derived(!!(filters.status || filters.type_name || filters.urgency));
 
   let cityLabel = $derived(filters.city ? (cities.find(c => c.id === filters.city)?.name ?? filters.city) : "Any City");
   let topicLabel = $derived(filters.topic ? formatTopic(filters.topic) : "Any Issue");

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createCollectionStore } from "@/hooks/use-collection.svelte";
+  import { useErrorToast } from "@/hooks/use-error-toast.svelte";
   import AddBillModal from "./components/AddBillModal.svelte";
   import type { Bill } from "@/types";
   import { Card, CardContent } from "@/components/ui/card";
@@ -16,6 +17,8 @@
   let { slug }: { slug?: string } = $props();
 
   const store = createCollectionStore(slug ?? "");
+  useErrorToast(store.error, "Failed to load collection");
+  useErrorToast(store.mutationError, "Failed to save changes");
 
   let editState = $state<{ kind: string; value?: string; itemId?: number }>({ kind: "idle" });
   let showAddModal = $state(false);
@@ -47,8 +50,8 @@
     setTimeout(() => (copied = false), 2000);
   }
 
-  const isEditingName = editState.kind === "name";
-  const isEditingDesc = editState.kind === "desc";
+  let isEditingName = $derived(editState.kind === "name");
+  let isEditingDesc = $derived(editState.kind === "desc");
 </script>
 
 {#if store.loading}

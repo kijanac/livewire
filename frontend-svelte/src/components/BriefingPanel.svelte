@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createBriefing } from "@/hooks/use-briefing.svelte";
+  import { useErrorToast } from "@/hooks/use-error-toast.svelte";
   import {
     Sheet,
     SheetContent,
@@ -32,6 +33,7 @@
   } = $props();
 
   const briefingStore = createBriefing(billId);
+  useErrorToast(briefingStore.error, "Failed to load briefing");
 
   function handleNavigate(id: number) {
     briefingStore.navigateTo(id);

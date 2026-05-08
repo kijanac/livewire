@@ -4,11 +4,11 @@
   import { Button } from "@/components/ui/button";
   import { Input } from "@/components/ui/input";
 
-  const { stubs, creating, create } = createCollectionStubs();
+  const collectionStore = createCollectionStubs();
   let newName = $state("");
 
   function handleCreate() {
-    create(newName);
+    collectionStore.create(newName);
     newName = "";
   }
 </script>
@@ -27,18 +27,18 @@
         placeholder="Name this collection..."
         class="flex-1"
       />
-      <Button onclick={handleCreate} disabled={creating || !newName.trim()}>
-        {creating ? "..." : "Create"}
+      <Button onclick={handleCreate} disabled={collectionStore.creating || !newName.trim()}>
+        {collectionStore.creating ? "..." : "Create"}
       </Button>
     </div>
 
-    {#if stubs.length === 0}
+    {#if collectionStore.stubs.length === 0}
       <p class="text-xs text-muted-foreground">
         No collections yet. Name one above to start tracking.
       </p>
     {:else}
       <ul class="space-y-1">
-        {#each stubs as stub (stub.slug)}
+        {#each collectionStore.stubs as stub (stub.slug)}
           <li>
             <a
               href={`#/collection/${stub.slug}`}

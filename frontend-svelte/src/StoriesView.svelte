@@ -2,6 +2,7 @@
   import { createStories } from "@/hooks/use-stories.svelte";
   import { createCities } from "@/hooks/use-cities.svelte";
   import { createTopics } from "@/hooks/use-topics.svelte";
+  import { useErrorToast } from "@/hooks/use-error-toast.svelte";
   import type { Story } from "@/types";
   import { Card, CardHeader, CardContent } from "@/components/ui/card";
   import {
@@ -23,6 +24,7 @@
   const storiesStore = createStories();
   const { cities } = createCities();
   const { topics } = createTopics();
+  useErrorToast(storiesStore.error, "Failed to load stories");
 
   const CLEAR = "__clear__";
   let totalPages = $derived(Math.ceil(storiesStore.total / storiesStore.perPage));
