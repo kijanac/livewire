@@ -22,8 +22,8 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
 
   const storiesStore = createStories();
-  const { cities } = createCities();
-  const { topics } = createTopics();
+  const citiesStore = createCities();
+  const topicsStore = createTopics();
   useErrorToast(storiesStore.error, "Failed to load stories");
 
   const CLEAR = "__clear__";
@@ -51,7 +51,7 @@
       <SelectTrigger>{storiesStore.filters.city ? (cities.find(c => c.id === storiesStore.filters.city)?.name ?? storiesStore.filters.city) : "All Cities"}</SelectTrigger>
       <SelectContent>
         <SelectItem value={CLEAR}>All Cities</SelectItem>
-        {#each cities as c (c.id)}
+        {#each citiesStore.cities as c (c.id)}
           <SelectItem value={c.id}>{c.name}</SelectItem>
         {/each}
       </SelectContent>
@@ -81,7 +81,7 @@
       <SelectTrigger>{storiesStore.filters.topic ? formatTopic(storiesStore.filters.topic) : "All Topics"}</SelectTrigger>
       <SelectContent>
         <SelectItem value={CLEAR}>All Topics</SelectItem>
-        {#each topics as t (t)}
+        {#each topicsStore.topics as t (t)}
           <SelectItem value={t}>{formatTopic(t)}</SelectItem>
         {/each}
       </SelectContent>

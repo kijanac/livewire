@@ -20,7 +20,7 @@
   import Zap from "@lucide/svelte/icons/zap";
 
   const radarStore = createRadar();
-  const { topics } = createTopics();
+  const topicsStore = createTopics();
   useErrorToast(radarStore.error, "Failed to load radar");
   let selectedBillId = $state<number | null>(null);
   let expandedClusters = new SvelteSet<string>();
@@ -47,7 +47,7 @@
       <SelectTrigger>{radarStore.selectedTopic ? formatTopic(radarStore.selectedTopic) : "Any Issue"}</SelectTrigger>
       <SelectContent>
         <SelectItem value={CLEAR}>Any Issue</SelectItem>
-        {#each topics as topic (topic)}
+        {#each topicsStore.topics as topic (topic)}
           <SelectItem value={topic}>{formatTopic(topic)}</SelectItem>
         {/each}
       </SelectContent>

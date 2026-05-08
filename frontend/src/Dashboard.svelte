@@ -16,8 +16,8 @@
   const keyRef = () => refreshKey;
   const billsStore = createBills(keyRef);
   const statsStore = createStats(keyRef);
-  const { cities } = createCities();
-  const { topics } = createTopics();
+  const citiesStore = createCities();
+  const topicsStore = createTopics();
   const upcomingStore = createUpcoming(keyRef);
 
   useErrorToast(billsStore.error, "Failed to load bills");
@@ -31,8 +31,8 @@
   <CollectionsSidebar />
   <Filters
     filters={billsStore.filters}
-    cities={cities}
-    topics={topics}
+    cities={citiesStore.cities}
+    topics={topicsStore.topics}
     onChange={(f) => billsStore.setFilters(f)}
   />
 
