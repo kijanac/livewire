@@ -1,0 +1,1 @@
+import{i as e,r as t,t as n}from"./index-JOBNoah8.js";var r=e(`<div class="p-6"><h2 class="text-page-heading">Dashboard</h2> <p class="text-muted-foreground mt-2">Coming soon...</p></div>`);function i(e,i){n(i,`refreshKey`,3,0),t(e,r())}export{i as default};
