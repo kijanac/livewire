@@ -255,7 +255,18 @@ def list_cities() -> list[CityResponse]:
 
 @router.get("/stats", response_model=StatsResponse)
 def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
-    return build_stats(db)
+    try:
+        return build_stats(db)
+    except Exception:
+        logger.exception("stats_endpoint_failed")
+        return StatsResponse(
+            moving_this_week=0,
+            hot_topics=[],
+            most_active_city=None,
+            new_bills_7d=0,
+            by_status=[],
+            by_city=[],
+        )
 
 
 @router.post("/ingest", response_model=None)
