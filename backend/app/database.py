@@ -64,12 +64,10 @@ def init_db() -> None:
     cfg = _alembic_config()
 
     if not has_alembic_version and has_legacy_tables:
+        # Legacy DB: stamp at head so Alembic knows the initial state,
+        # then let upgrade handle adding any missing tables/columns.
         command.stamp(cfg, "head")
-        logger.info(
-            "alembic_stamped_head",
-            extra={"event": "alembic_stamped_head"},
-        )
-        return
+        logger.info("alembic_stamped_head")
 
     command.upgrade(cfg, "head")
     logger.info(
