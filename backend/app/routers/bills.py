@@ -11,6 +11,8 @@ from app.briefing import get_or_create_briefing
 from app.config import settings
 from app.database import SessionLocal, get_db
 from app.ingesters.legistar import LegistarIngester
+from app.ingesters.legistar_html import HTMLLegistarIngester
+from app.ingesters.openstates import OpenStatesIngester
 from app.models import Bill, BillBriefing, BillDocument, CollectionItem
 from app.schemas import (
     BillBriefingResponse,
@@ -324,13 +326,26 @@ def _run_ingest_background(body: IngestRequest | None = None) -> None:
 
 
 def _try_ingest_city(city_key: str, city_config: dict, session) -> tuple[int, int]:
-    """Run API-based Legistar ingestion for a single city."""
-    ingester = LegistarIngester(
+    """Try API ingester first, fall back to HTML scraping."""
+    api_ingester = LegistarIngester(
         city_key=city_key,
         city_config=city_config,
         base_url=settings.LEGISTAR_BASE_URL,
     )
-    return ingester.ingest(session)
+    try:
+        added, updated = api_ingester.ingest(session)
+        return added, updated
+    except Exception as exc:
+        logger.warning(
+            "api_ingest_failed_falling_back_to_html",
+            extra={"city": city_key, "error": str(exc)[:200]},
+        )
+        session.rollback()
+
+    html_ingester = HTMLLegistarIngester(
+        city_key=city_key, city_config=city_config
+    )
+    return html_ingester.ingest(session)
 
 
 @router.post("/tag", response_model=dict)

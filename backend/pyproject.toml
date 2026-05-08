@@ -10,6 +10,9 @@ dependencies = [
     "httpx>=0.27.0",
     "apscheduler>=3.10.4",
     "pydantic-settings>=2.5.0",
+    "numpy>=1.26.0",
     "feedparser>=6.0.0",
     "alembic>=1.18.4",
+    "scraper-legistar>=0.0.2",
+    "lxml>=6.1.0",
 ]
