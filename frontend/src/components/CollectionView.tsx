@@ -1,16 +1,49 @@
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import { useCollection } from "../hooks/useCollection";
+import { useErrorToast } from "../hooks/useErrorToast";
 import AddBillModal from "./AddBillModal";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { formatDate, getStatusClasses } from "@/lib/bill-utils";
+import { formatDate, formatTopic, getStatusClasses } from "@/lib/bill-utils";
 import { Plus, Share2, Trash2, X } from "lucide-react";
 
 interface CollectionViewProps {
   slug: string;
+}
+
+type EditState =
+  | { kind: "idle" }
+  | { kind: "name"; value: string }
+  | { kind: "desc"; value: string }
+  | { kind: "note"; itemId: number; value: string };
+
+type EditAction =
+  | { type: "start_name"; value: string }
+  | { type: "start_desc"; value: string }
+  | { type: "start_note"; itemId: number; value: string }
+  | { type: "update_value"; value: string }
+  | { type: "cancel" };
+
+function editReducer(state: EditState, action: EditAction): EditState {
+  switch (action.type) {
+    case "start_name":
+      return { kind: "name", value: action.value };
+    case "start_desc":
+      return { kind: "desc", value: action.value };
+    case "start_note":
+      return { kind: "note", itemId: action.itemId, value: action.value };
+    case "update_value":
+      if (state.kind === "idle") return state;
+      if (state.kind === "note") {
+        return { kind: "note", itemId: state.itemId, value: action.value };
+      }
+      return { kind: state.kind, value: action.value };
+    case "cancel":
+      return { kind: "idle" };
+  }
 }
 
 function CollectionView({ slug }: CollectionViewProps) {
@@ -18,6 +51,7 @@ function CollectionView({ slug }: CollectionViewProps) {
     collection,
     loading,
     error,
+    mutationError,
     saveName,
     saveDescription,
     addBill,
@@ -26,23 +60,30 @@ function CollectionView({ slug }: CollectionViewProps) {
     remove,
   } = useCollection(slug);
 
+  useErrorToast(error, "Failed to load collection");
+  useErrorToast(mutationError, "Failed to save changes");
+
+  const [editState, dispatchEdit] = useReducer(editReducer, { kind: "idle" } as EditState);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [editingName, setEditingName] = useState(false);
-  const [editingDesc, setEditingDesc] = useState(false);
-  const [nameValue, setNameValue] = useState("");
-  const [descValue, setDescValue] = useState("");
   const [copied, setCopied] = useState(false);
-  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
-  const [noteValue, setNoteValue] = useState("");
 
   const handleSaveName = () => {
-    setEditingName(false);
-    saveName(nameValue);
+    if (editState.kind !== "name") return;
+    const value = editState.value;
+    dispatchEdit({ type: "cancel" });
+    saveName(value);
   };
 
   const handleSaveDesc = () => {
-    setEditingDesc(false);
-    saveDescription(descValue);
+    if (editState.kind !== "desc") return;
+    const value = editState.value;
+    dispatchEdit({ type: "cancel" });
+    saveDescription(value);
+  };
+
+  const handleSaveNote = (itemId: number, value: string) => {
+    dispatchEdit({ type: "cancel" });
+    saveNote(itemId, value);
   };
 
   const handleShare = () => {
@@ -54,15 +95,13 @@ function CollectionView({ slug }: CollectionViewProps) {
 
   const handleStartEditName = () => {
     if (collection) {
-      setNameValue(collection.name);
-      setEditingName(true);
+      dispatchEdit({ type: "start_name", value: collection.name });
     }
   };
 
   const handleStartEditDesc = () => {
     if (collection) {
-      setDescValue(collection.description || "");
-      setEditingDesc(true);
+      dispatchEdit({ type: "start_desc", value: collection.description || "" });
     }
   };
 
@@ -106,6 +145,8 @@ function CollectionView({ slug }: CollectionViewProps) {
   }
 
   const existingBillIds = new Set(collection.items.map((i) => i.bill_id));
+  const isEditingName = editState.kind === "name";
+  const isEditingDesc = editState.kind === "desc";
 
   return (
     <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -113,13 +154,16 @@ function CollectionView({ slug }: CollectionViewProps) {
       <div className="mb-6">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
           <div className="flex-1">
-            {editingName ? (
+            {isEditingName ? (
               <Input
                 type="text"
-                value={nameValue}
-                onChange={(e) => setNameValue(e.target.value)}
+                value={editState.value}
+                onChange={(e) => dispatchEdit({ type: "update_value", value: e.target.value })}
                 onBlur={handleSaveName}
-                onKeyDown={(e) => e.key === "Enter" && handleSaveName()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSaveName();
+                  else if (e.key === "Escape") dispatchEdit({ type: "cancel" });
+                }}
                 autoFocus
                 className="text-2xl font-bold text-foreground bg-transparent border-b-2 border-primary outline-none w-full"
               />
@@ -127,11 +171,14 @@ function CollectionView({ slug }: CollectionViewProps) {
               <h1 className="text-page-heading uppercase tracking-tight"><button type="button" className="hover:text-primary transition-colors text-left" onClick={handleStartEditName} aria-label="Edit collection name">{collection.name}</button></h1>
             )}
 
-            {editingDesc ? (
+            {isEditingDesc ? (
               <textarea
-                value={descValue}
-                onChange={(e) => setDescValue(e.target.value)}
+                value={editState.value}
+                onChange={(e) => dispatchEdit({ type: "update_value", value: e.target.value })}
                 onBlur={handleSaveDesc}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") dispatchEdit({ type: "cancel" });
+                }}
                 autoFocus
                 rows={2}
                 className="mt-1 text-sm text-muted-foreground bg-transparent border border-border rounded-lg outline-none w-full px-2 py-1 focus:ring-2 focus:ring-primary"
@@ -192,7 +239,7 @@ function CollectionView({ slug }: CollectionViewProps) {
         <div className="space-y-3">
           {collection.items.map((item) => {
             const bill = item.bill;
-            const isEditingNote = editingNoteId === item.id;
+            const isEditingNote = editState.kind === "note" && editState.itemId === item.id;
 
             return (
               <Card
@@ -264,7 +311,7 @@ function CollectionView({ slug }: CollectionViewProps) {
                               key={topic}
                               variant="secondary"
                             >
-                              {topic.replace(/_/g, " ")}
+                              {formatTopic(topic)}
                             </Badge>
                           ))}
                         </div>
@@ -286,17 +333,15 @@ function CollectionView({ slug }: CollectionViewProps) {
                 <div className="bg-accent/10 border-t border-accent/20 px-4 py-2.5">
                   {isEditingNote ? (
                     <textarea
-                      value={noteValue}
-                      onChange={(e) => setNoteValue(e.target.value)}
-                      onBlur={() => {
-                        setEditingNoteId(null);
-                        saveNote(item.id, noteValue);
-                      }}
+                      value={editState.value}
+                      onChange={(e) => dispatchEdit({ type: "update_value", value: e.target.value })}
+                      onBlur={() => handleSaveNote(item.id, editState.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
-                          setEditingNoteId(null);
-                          saveNote(item.id, noteValue);
+                          handleSaveNote(item.id, editState.value);
+                        } else if (e.key === "Escape") {
+                          dispatchEdit({ type: "cancel" });
                         }
                       }}
                       autoFocus
@@ -308,10 +353,7 @@ function CollectionView({ slug }: CollectionViewProps) {
                     <button
                       type="button"
                       className="text-sm text-foreground hover:text-primary transition-colors min-h-[1.25rem] text-left w-full"
-                      onClick={() => {
-                        setEditingNoteId(item.id);
-                        setNoteValue(item.note || "");
-                      }}
+                      onClick={() => dispatchEdit({ type: "start_note", itemId: item.id, value: item.note || "" })}
                       aria-label="Edit note"
                     >
                       {item.note || (

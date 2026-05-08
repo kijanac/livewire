@@ -11,6 +11,7 @@ const INITIAL_FILTERS: BillFilters = {
   topic: "",
   urgency: "",
   search: "",
+  jurisdiction_level: "",
 };
 
 export function useBills(refreshKey: number) {
@@ -21,27 +22,21 @@ export function useBills(refreshKey: number) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadBills = useCallback(async () => {
+  useEffect(() => {
+    const ctrl = new AbortController();
     setLoading(true);
     setError(null);
-    try {
-      const data = await fetchBills({
-        ...filters,
-        page,
-        per_page: PER_PAGE,
-      });
-      setBills(data.bills);
-      setTotal(data.total);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load bills");
-    } finally {
-      setLoading(false);
-    }
-  }, [filters, page]);
-
-  useEffect(() => {
-    loadBills();
-  }, [loadBills, refreshKey]);
+    fetchBills({ ...filters, page, per_page: PER_PAGE }, ctrl.signal)
+      .then((data) => {
+        setBills(data.bills);
+        setTotal(data.total);
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") setError(err.message ?? String(err));
+      })
+      .finally(() => setLoading(false));
+    return () => ctrl.abort();
+  }, [filters, page, refreshKey]);
 
   const handleFiltersChange = useCallback((newFilters: BillFilters) => {
     setFilters(newFilters);

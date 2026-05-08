@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    ENVIRONMENT: str = "dev"
     DATABASE_URL: str = "sqlite:///./data/bills.db"
     INGEST_INTERVAL_HOURS: int = 6
     LEGISTAR_BASE_URL: str = "https://webapi.legistar.com/v1"
@@ -12,6 +13,15 @@ class Settings(BaseSettings):
 
     OPENSTATES_API_KEY: str = ""
     OPENSTATES_BASE_URL: str = "https://v3.openstates.org"
+    OPENSTATES_PER_PAGE: int = 20
+    OPENSTATES_LOOKBACK_DAYS: int = 2
+    OPENSTATES_MAX_RETRIES_429: int = 4
+
+    STORY_RETENTION_DAYS: int = 90
+
+    SIMILAR_N: int = 10
+    SIMILAR_BATCH: int = 50
+    SIMILAR_THRESHOLD: float = 0.3
 
     CITIES: dict = {
         # Major metros

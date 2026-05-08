@@ -5,6 +5,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Table,
     Text,
@@ -51,6 +52,19 @@ class Bill(Base):
     updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
+    documents = relationship(
+        "BillDocument",
+        back_populates="bill",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
+    topic_links = relationship(
+        "BillTopic",
+        back_populates="bill",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
+
     __table_args__ = (
         UniqueConstraint("source", "source_id", "city", name="uq_source_bill"),
         Index("ix_bills_city", "city"),
@@ -63,6 +77,27 @@ class Bill(Base):
 
     def __repr__(self) -> str:
         return f"<Bill(id={self.id}, city={self.city}, file_number={self.file_number})>"
+
+
+class BillTopic(Base):
+    __tablename__ = "bill_topics"
+
+    bill_id = Column(
+        Integer,
+        ForeignKey("bills.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    topic_name = Column(String, primary_key=True)
+
+    bill = relationship("Bill", back_populates="topic_links")
+
+    __table_args__ = (
+        Index("ix_bill_topics_topic_name", "topic_name"),
+        Index("ix_bill_topics_bill_id", "bill_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<BillTopic(bill_id={self.bill_id}, topic_name={self.topic_name})>"
 
 
 class Collection(Base):
@@ -108,6 +143,8 @@ class CollectionItem(Base):
 
     __table_args__ = (
         UniqueConstraint("collection_id", "bill_id", name="uq_collection_bill"),
+        Index("ix_collection_items_collection_id", "collection_id"),
+        Index("ix_collection_items_bill_id", "bill_id"),
     )
 
     def __repr__(self) -> str:
@@ -152,7 +189,7 @@ class BillDocument(Base):
     name = Column(String, nullable=False)
     url = Column(String, nullable=False)
 
-    bill = relationship("Bill")
+    bill = relationship("Bill", back_populates="documents")
 
     __table_args__ = (
         UniqueConstraint("bill_id", "url", name="uq_bill_document"),
@@ -173,7 +210,9 @@ class BillEmbedding(Base):
         unique=True,
         nullable=False,
     )
-    embedding_json = Column(Text, nullable=False)  # JSON array of floats
+    # kept for one release as a fallback during cutover to embedding_bytes
+    embedding_json = Column(Text, nullable=True)
+    embedding_bytes = Column(LargeBinary, nullable=True)
     similar_json = Column(Text, nullable=True)  # JSON: [[bill_id, score], ...]
 
     def __repr__(self) -> str:
@@ -202,6 +241,7 @@ class Official(Base):
     __table_args__ = (
         UniqueConstraint("source_id", "city", name="uq_official_source"),
         Index("ix_officials_city", "city"),
+        Index("ix_officials_active", "active"),
     )
 
     def __repr__(self) -> str:
@@ -302,6 +342,7 @@ class Story(Base):
         Index("ix_stories_published_at", "published_at"),
         Index("ix_stories_relevant", "relevant"),
         Index("ix_stories_category", "category"),
+        Index("ix_stories_source_id", "source_id"),
     )
 
     def __repr__(self) -> str:
@@ -330,6 +371,8 @@ class BillAction(Base):
 
     __table_args__ = (
         Index("ix_bill_actions_bill_id", "bill_id"),
+        Index("ix_bill_actions_mover_id", "mover_id"),
+        Index("ix_bill_actions_seconder_id", "seconder_id"),
     )
 
     def __repr__(self) -> str:

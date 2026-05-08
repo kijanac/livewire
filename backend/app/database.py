@@ -1,12 +1,17 @@
+import logging
 import os
 from collections.abc import Generator
+from pathlib import Path
 
-from sqlalchemy import create_engine
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.config import settings
 
-# Ensure the data directory exists for SQLite
+logger = logging.getLogger(__name__)
+
 db_path = settings.DATABASE_URL.replace("sqlite:///", "")
 db_dir = os.path.dirname(db_path)
 if db_dir:
@@ -21,47 +26,46 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+_ALEMBIC_INI = _BACKEND_DIR / "alembic.ini"
+_ALEMBIC_DIR = _BACKEND_DIR / "alembic"
+
+
+def _alembic_config() -> Config:
+    cfg = Config(str(_ALEMBIC_INI))
+    cfg.set_main_option("script_location", str(_ALEMBIC_DIR))
+    cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    return cfg
+
 
 def init_db() -> None:
-    """Create all tables defined by SQLAlchemy models."""
+    """Bring the database schema up to head via Alembic.
+
+    Pre-Alembic legacy DBs are stamped at head so we don't try to recreate tables
+    that already exist; fresh DBs and partially-migrated DBs run upgrade head.
+    """
     from app import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
-
-    # Safe column additions for schema evolution (SQLite has no migrations)
-    from sqlalchemy import inspect, text
-
     inspector = inspect(engine)
-    existing_bill_cols = {col["name"] for col in inspector.get_columns("bills")}
-    with engine.begin() as conn:
-        if "topics" not in existing_bill_cols:
-            conn.execute(text("ALTER TABLE bills ADD COLUMN topics TEXT"))
-        if "enriched_at" not in existing_bill_cols:
-            conn.execute(text("ALTER TABLE bills ADD COLUMN enriched_at DATETIME"))
-        if "jurisdiction_level" not in existing_bill_cols:
-            conn.execute(
-                text("ALTER TABLE bills ADD COLUMN jurisdiction_level TEXT NOT NULL DEFAULT 'city'")
-            )
+    has_alembic_version = inspector.has_table("alembic_version")
+    existing_tables = set(inspector.get_table_names())
+    has_legacy_tables = "bills" in existing_tables
 
-    if "bill_briefings" in inspector.get_table_names():
-        existing_briefing_cols = {col["name"] for col in inspector.get_columns("bill_briefings")}
-        with engine.begin() as conn:
-            if "organizing" not in existing_briefing_cols:
-                conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN organizing TEXT"))
-            if "reception" not in existing_briefing_cols:
-                conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN reception TEXT"))
-            if "power_analysis" not in existing_briefing_cols:
-                conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN power_analysis TEXT"))
-            if "narrative_json" not in existing_briefing_cols:
-                conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN narrative_json TEXT"))
-            if "coalition_json" not in existing_briefing_cols:
-                conn.execute(text("ALTER TABLE bill_briefings ADD COLUMN coalition_json TEXT"))
+    cfg = _alembic_config()
 
-    if "bill_embeddings" in inspector.get_table_names():
-        existing_embed_cols = {col["name"] for col in inspector.get_columns("bill_embeddings")}
-        with engine.begin() as conn:
-            if "similar_json" not in existing_embed_cols:
-                conn.execute(text("ALTER TABLE bill_embeddings ADD COLUMN similar_json TEXT"))
+    if not has_alembic_version and has_legacy_tables:
+        command.stamp(cfg, "head")
+        logger.info(
+            "alembic_stamped_head",
+            extra={"event": "alembic_stamped_head"},
+        )
+        return
+
+    command.upgrade(cfg, "head")
+    logger.info(
+        "alembic_upgrade_completed",
+        extra={"event": "alembic_upgrade_completed"},
+    )
 
 
 def get_db() -> Generator[Session, None, None]:

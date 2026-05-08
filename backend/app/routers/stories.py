@@ -40,7 +40,7 @@ def list_stories(
     category: str | None = Query(None),
     topic: str | None = Query(None),
     relevant_only: bool = Query(True),
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=10_000),
     per_page: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> StoryListResponse:

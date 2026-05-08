@@ -1,6 +1,7 @@
 import { useStories } from "../hooks/useStories";
 import { useCities } from "../hooks/useCities";
 import { useTopics } from "../hooks/useTopics";
+import { useErrorToast } from "../hooks/useErrorToast";
 import type { Story } from "../types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import {
@@ -12,18 +13,14 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "./Spinner";
 import { formatTopic, formatDate } from "@/lib/bill-utils";
 import { cn } from "@/lib/utils";
+import { CATEGORY_LABELS, STORY_STAGGER_MS, staggerDelay } from "@/lib/visual-tokens";
 import { ExternalLink, ChevronLeft, ChevronRight } from "lucide-react";
 
-const CATEGORY_LABELS: Record<string, { label: string; classes: string }> = {
-  power_shift: { label: "Power Shift", classes: "bg-purple-50 text-purple-900 border border-purple-200" },
-  money_move: { label: "Money Move", classes: "bg-emerald-50 text-emerald-900 border border-emerald-200" },
-  movement_activity: { label: "Movement", classes: "bg-blue-50 text-blue-900 border border-blue-200" },
-  institutional: { label: "Institutional", classes: "bg-amber-50 text-amber-900 border border-amber-200" },
-  crisis: { label: "Crisis", classes: "bg-red-50 text-red-900 border border-red-200" },
-  other: { label: "Other", classes: "bg-muted text-muted-foreground" },
-};
+const pluralize = (n: number, singular: string, plural: string) =>
+  n === 1 ? `${n} ${singular}` : `${n} ${plural}`;
 
 function CategoryBadge({ category }: { category: string | null }) {
   if (!category) return null;
@@ -38,7 +35,7 @@ function CategoryBadge({ category }: { category: string | null }) {
 
 function StoryCard({ story, index }: { story: Story; index: number }) {
   return (
-    <div className="animate-fade-up" style={{ animationDelay: `${index * 60}ms` }}>
+    <div className="animate-fade-up" style={staggerDelay(index, STORY_STAGGER_MS)}>
       <Card className="overflow-hidden py-0 gap-0">
         <CardHeader className="p-4 pb-3">
           <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -93,9 +90,10 @@ function StoryCard({ story, index }: { story: Story; index: number }) {
 }
 
 function StoriesView() {
-  const { stories, total, page, perPage, filters, loading, setPage, setFilters } = useStories();
+  const { stories, total, page, perPage, filters, loading, error, setPage, setFilters } = useStories();
   const cities = useCities();
   const topics = useTopics();
+  useErrorToast(error, "Failed to load stories");
 
   const totalPages = Math.ceil(total / perPage);
 
@@ -173,7 +171,7 @@ function StoriesView() {
 
         {!loading && (
           <span className="text-sm font-[var(--font-mono)] text-muted-foreground">
-            {total} stor{total !== 1 ? "ies" : "y"}
+            {pluralize(total, "story", "stories")}
           </span>
         )}
       </div>
@@ -181,14 +179,7 @@ function StoriesView() {
       {/* Loading */}
       {loading && (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
-          <svg
-            className="animate-spin motion-reduce:animate-none h-6 w-6 text-primary"
-            viewBox="0 0 24 24"
-            fill="none"
-          >
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
+          <Spinner size={24} className="text-primary" />
           <span className="text-sm text-muted-foreground">Loading stories...</span>
         </div>
       )}

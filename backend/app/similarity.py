@@ -16,6 +16,18 @@ EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2:free"
 EMBEDDING_BATCH_SIZE = 50
 
 
+def _load_vector(emb_bytes: bytes | None, emb_json: str | None) -> np.ndarray | None:
+    """Decode an embedding row, preferring bytes and falling back to JSON."""
+    if emb_bytes:
+        return np.frombuffer(emb_bytes, dtype=np.float32)
+    if emb_json:
+        try:
+            return np.array(json.loads(emb_json), dtype=np.float32)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 def _call_embeddings_api(texts: list[str]) -> list[list[float]]:
     """Call OpenRouter embeddings API. Returns list of embedding vectors."""
     headers = {
@@ -81,37 +93,35 @@ def embed_unembedded_bills(session=None) -> int:
             try:
                 embeddings = _call_embeddings_api(texts)
                 for (bill_id, _, _, _), emb in zip(batch, embeddings):
+                    arr = np.asarray(emb, dtype=np.float32)
                     session.add(
                         BillEmbedding(
                             bill_id=bill_id,
-                            embedding_json=json.dumps(emb),
+                            embedding_json=None,
+                            embedding_bytes=arr.tobytes(),
                         )
                     )
                 session.commit()
                 total += len(embeddings)
-                time.sleep(0.2)  # Rate limit courtesy
-            except Exception as exc:
-                logger.error(
-                    "Embedding batch failed",
+                time.sleep(0.2)
+            except (httpx.HTTPError, json.JSONDecodeError, KeyError) as exc:
+                logger.exception(
+                    "embedding_batch_failed",
                     extra={
-                        "event": "embedding_batch_failed",
-                        "error": str(exc),
+                        "error": str(exc)[:200],
                         "batch_start": i,
                     },
                 )
                 session.rollback()
 
         logger.info(
-            "Embeddings generated",
-            extra={"event": "embeddings_generated", "count": total},
+            "embeddings_generated",
+            extra={"count": total},
         )
         return total
     finally:
         if own_session:
             session.close()
-
-
-_SIMILAR_N = 10  # pre-compute top 10 for cache
 
 
 def find_similar_bills(bill_id: int, n: int = 5) -> list[tuple[int, float]]:
@@ -147,14 +157,20 @@ def _scan_similar(
 ) -> list[tuple[int, float]]:
     """Full embedding scan for similar bills. Used as fallback and for pre-computation."""
     CHUNK_SIZE = 200
-    target_vec = np.array(json.loads(target.embedding_json), dtype=np.float32)
+    target_vec = _load_vector(target.embedding_bytes, target.embedding_json)
+    if target_vec is None:
+        return []
     target_norm = np.linalg.norm(target_vec)
     if target_norm == 0:
         return []
     target_vec = target_vec / target_norm
 
     base_query = (
-        session.query(BillEmbedding.bill_id, BillEmbedding.embedding_json)
+        session.query(
+            BillEmbedding.bill_id,
+            BillEmbedding.embedding_bytes,
+            BillEmbedding.embedding_json,
+        )
         .filter(BillEmbedding.bill_id != target.bill_id)
         .order_by(BillEmbedding.bill_id)
     )
@@ -166,13 +182,15 @@ def _scan_similar(
         if not chunk:
             break
 
-        for other_id, emb_json in chunk:
-            other_vec = np.array(json.loads(emb_json), dtype=np.float32)
+        for other_id, other_bytes, other_json in chunk:
+            other_vec = _load_vector(other_bytes, other_json)
+            if other_vec is None:
+                continue
             other_norm = np.linalg.norm(other_vec)
             if other_norm == 0:
                 continue
             similarity = float(np.dot(target_vec, other_vec / other_norm))
-            if similarity > 0.3:
+            if similarity > settings.SIMILAR_THRESHOLD:
                 if len(top_n) < n:
                     heapq.heappush(top_n, (similarity, other_id))
                 elif similarity > top_n[0][0]:
@@ -181,9 +199,6 @@ def _scan_similar(
         offset += CHUNK_SIZE
 
     return [(bid, score) for score, bid in sorted(top_n, reverse=True)]
-
-
-_SIMILAR_BATCH = 50
 
 
 def compute_all_similar(session=None) -> int:
@@ -201,7 +216,7 @@ def compute_all_similar(session=None) -> int:
             batch = (
                 session.query(BillEmbedding)
                 .filter(BillEmbedding.similar_json.is_(None))
-                .limit(_SIMILAR_BATCH)
+                .limit(settings.SIMILAR_BATCH)
                 .all()
             )
             if not batch:
@@ -209,13 +224,13 @@ def compute_all_similar(session=None) -> int:
 
             for emb in batch:
                 try:
-                    similar = _scan_similar(session, emb, _SIMILAR_N)
+                    similar = _scan_similar(session, emb, settings.SIMILAR_N)
                     emb.similar_json = json.dumps(similar)
                     count += 1
-                except Exception as exc:
-                    logger.error(
-                        "Similar computation failed",
-                        extra={"event": "similar_computation_failed", "bill_id": emb.bill_id, "error": str(exc)},
+                except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                    logger.exception(
+                        "similar_computation_failed",
+                        extra={"bill_id": emb.bill_id, "error": str(exc)[:200]},
                     )
 
             session.commit()
@@ -226,8 +241,8 @@ def compute_all_similar(session=None) -> int:
             time.sleep(0.1)
 
         logger.info(
-            "Similar bills pre-computed",
-            extra={"event": "similar_precomputed", "count": count},
+            "similar_precomputed",
+            extra={"count": count},
         )
         return count
     finally:
@@ -250,7 +265,11 @@ def cluster_bills(
     """
     session = SessionLocal()
     try:
-        query = session.query(BillEmbedding.bill_id, BillEmbedding.embedding_json)
+        query = session.query(
+            BillEmbedding.bill_id,
+            BillEmbedding.embedding_bytes,
+            BillEmbedding.embedding_json,
+        )
         if bill_ids:
             if len(bill_ids) > MAX_CLUSTER_BILLS:
                 bill_ids = sorted(bill_ids, reverse=True)[:MAX_CLUSTER_BILLS]
@@ -262,11 +281,12 @@ def cluster_bills(
         if len(rows) < 2:
             return []
 
-        # Load embeddings into memory
         ids = []
         vecs = []
-        for bid, emb_json in rows:
-            vec = np.array(json.loads(emb_json), dtype=np.float32)
+        for bid, emb_bytes, emb_json in rows:
+            vec = _load_vector(emb_bytes, emb_json)
+            if vec is None:
+                continue
             norm = np.linalg.norm(vec)
             if norm > 0:
                 ids.append(bid)
@@ -310,9 +330,8 @@ def cluster_bills(
         clusters.sort(key=lambda c: len(c["bill_ids"]), reverse=True)
 
         logger.info(
-            "Bill clustering completed",
+            "clustering_completed",
             extra={
-                "event": "clustering_completed",
                 "input_bills": len(ids),
                 "clusters_found": len(clusters),
             },

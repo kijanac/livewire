@@ -9,7 +9,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Spinner } from "./Spinner";
 import { formatTopic } from "@/lib/bill-utils";
+import { Search } from "lucide-react";
 
 interface AddBillModalProps {
   existingBillIds: Set<number>;
@@ -29,20 +31,7 @@ function AddBillModal({ existingBillIds, onAdd, onClose }: AddBillModalProps) {
 
         <div className="py-3 border-b border-border">
           <div className="relative">
-            <svg
-              className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground z-10"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth="2"
-              stroke="currentColor"
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
-              />
-            </svg>
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground z-10" aria-hidden="true" />
             <Input
               type="text"
               value={search}
@@ -57,25 +46,7 @@ function AddBillModal({ existingBillIds, onAdd, onClose }: AddBillModalProps) {
         <div className="flex-1 overflow-y-auto py-3">
           {loading && (
             <div className="flex items-center justify-center py-8">
-              <svg
-                className="animate-spin motion-reduce:animate-none h-5 w-5 text-primary"
-                viewBox="0 0 24 24"
-                fill="none"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
+              <Spinner size={20} className="text-primary" />
             </div>
           )}
 

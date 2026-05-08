@@ -5,6 +5,7 @@ export interface Bill {
   city: string;
   city_name: string;
   state: string;
+  jurisdiction_level: string;
   file_number: string | null;
   title: string;
   type_name: string | null;
@@ -34,6 +35,7 @@ export interface City {
   id: string;
   name: string;
   state: string;
+  level: string;
 }
 
 export interface StatusCount {
@@ -80,6 +82,7 @@ export interface BillFilters {
   topic: string;
   urgency: string;
   search: string;
+  jurisdiction_level: string;
 }
 
 export interface CollectionItem {

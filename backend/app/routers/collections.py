@@ -73,9 +73,8 @@ def create_collection(
     db.commit()
     db.refresh(collection)
     logger.info(
-        "Collection created",
+        "collection_created",
         extra={
-            "event": "collection_created",
             "collection_id": collection.id,
             "slug": collection.slug,
         },
@@ -105,9 +104,8 @@ def update_collection(
     db.commit()
     db.refresh(collection)
     logger.info(
-        "Collection updated",
+        "collection_updated",
         extra={
-            "event": "collection_updated",
             "collection_id": collection.id,
             "slug": collection.slug,
             "fields_updated": list(update_data.keys()),
@@ -123,9 +121,8 @@ def delete_collection(
 ) -> Response:
     collection = _get_collection_by_slug(db, slug)
     logger.info(
-        "Collection deleted",
+        "collection_deleted",
         extra={
-            "event": "collection_deleted",
             "collection_id": collection.id,
             "slug": collection.slug,
         },
@@ -173,9 +170,8 @@ def add_item_to_collection(
     db.commit()
     db.refresh(item)
     logger.info(
-        "Item added to collection",
+        "collection_item_added",
         extra={
-            "event": "collection_item_added",
             "collection_id": collection.id,
             "slug": collection.slug,
             "bill_id": body.bill_id,
@@ -213,9 +209,8 @@ def update_collection_item(
     db.commit()
     db.refresh(item)
     logger.info(
-        "Collection item updated",
+        "collection_item_updated",
         extra={
-            "event": "collection_item_updated",
             "collection_id": collection.id,
             "slug": collection.slug,
             "item_id": item.id,
@@ -243,9 +238,8 @@ def delete_collection_item(
         raise HTTPException(status_code=404, detail="Collection item not found")
 
     logger.info(
-        "Collection item deleted",
+        "collection_item_deleted",
         extra={
-            "event": "collection_item_deleted",
             "collection_id": collection.id,
             "slug": collection.slug,
             "item_id": item.id,

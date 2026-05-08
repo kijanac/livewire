@@ -1,6 +1,7 @@
 import { useState, lazy, Suspense } from "react";
 import { useRadar } from "../hooks/useRadar";
 import { useTopics } from "../hooks/useTopics";
+import { useErrorToast } from "../hooks/useErrorToast";
 import type { RadarCluster, ClusterOutcomes } from "../types";
 const BriefingPanel = lazy(() => import("./BriefingPanel"));
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
@@ -13,15 +14,11 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "./Spinner";
 import { cn } from "@/lib/utils";
 import { getStatusClasses, formatTopic } from "@/lib/bill-utils";
+import { CLUSTER_STAGGER_MS, OUTCOME_INDICATORS, staggerDelay } from "@/lib/visual-tokens";
 import { Zap } from "lucide-react";
-
-const OUTCOME_INDICATORS = [
-  { key: "passed", color: "bg-green-500", label: "passed" },
-  { key: "failed", color: "bg-red-500", label: "failed" },
-  { key: "pending", color: "bg-amber-400", label: "pending" },
-] as const;
 
 function OutcomeBar({ outcomes }: { outcomes: ClusterOutcomes }) {
   const total = outcomes.passed + outcomes.failed + outcomes.pending;
@@ -185,9 +182,10 @@ function ClusterCard({
 }
 
 function RadarView() {
-  const { radar, selectedTopic, setSelectedTopic, loading } = useRadar();
+  const { radar, selectedTopic, setSelectedTopic, loading, error } = useRadar();
   const topics = useTopics();
   const [selectedBillId, setSelectedBillId] = useState<number | null>(null);
+  useErrorToast(error, "Failed to load radar");
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -231,25 +229,7 @@ function RadarView() {
       {/* Loading */}
       {loading && (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
-          <svg
-            className="animate-spin motion-reduce:animate-none h-6 w-6 text-primary"
-            viewBox="0 0 24 24"
-            fill="none"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
+          <Spinner size={24} className="text-primary" />
           <span className="text-sm text-muted-foreground">
             Scanning for patterns...
           </span>
@@ -275,7 +255,7 @@ function RadarView() {
       {!loading && radar && radar.clusters.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {radar.clusters.map((cluster, i) => (
-            <div key={cluster.label} className="animate-fade-up" style={{ animationDelay: `${i * 100}ms` }}>
+            <div key={cluster.label} className="animate-fade-up" style={staggerDelay(i, CLUSTER_STAGGER_MS)}>
               <ClusterCard
                 cluster={cluster}
                 onBillClick={setSelectedBillId}

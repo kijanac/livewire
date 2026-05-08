@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime, timezone
 
 import feedparser
@@ -13,6 +14,8 @@ logger = logging.getLogger(__name__)
 _USER_AGENT = (
     "Mozilla/5.0 (compatible; Livewire/1.0; +https://github.com/livewire)"
 )
+_FETCH_MAX_ATTEMPTS = 3
+_FETCH_BACKOFF_BASE = 2.0
 
 
 def _parse_published(entry: dict) -> datetime | None:
@@ -75,9 +78,8 @@ class RSSIngester(BaseIngester):
             session.commit()
 
             logger.info(
-                "RSS ingestion completed",
+                "rss_ingestion_completed",
                 extra={
-                    "event": "rss_ingestion_completed",
                     "source": self.source.name,
                     "city": self.source.city,
                     "stories_added": added,
@@ -88,47 +90,77 @@ class RSSIngester(BaseIngester):
             self.source.error_count += 1
             self.source.last_error = str(exc)[:500]
             session.commit()
-            logger.error(
-                "RSS ingestion failed",
+            logger.exception(
+                "rss_ingestion_failed",
                 extra={
-                    "event": "rss_ingestion_failed",
                     "source": self.source.name,
                     "city": self.source.city,
-                    "error": str(exc),
+                    "feed_url": self.source.feed_url,
                 },
             )
 
         return added, 0
 
     def _fetch_feed(self) -> feedparser.FeedParserDict | None:
-        """Fetch and parse the RSS feed."""
-        try:
-            with httpx.Client(timeout=20.0) as client:
-                response = client.get(
-                    self.source.feed_url,
-                    headers={"User-Agent": _USER_AGENT},
-                    follow_redirects=True,
-                )
-                response.raise_for_status()
-            feed = feedparser.parse(response.text)
-            if feed.bozo:
-                logger.warning(
-                    "Feed parse warning",
+        """Fetch and parse the RSS feed. Retries transient errors with exponential backoff."""
+        last_exc: httpx.RequestError | None = None
+        for attempt in range(1, _FETCH_MAX_ATTEMPTS + 1):
+            try:
+                with httpx.Client(timeout=20.0) as client:
+                    response = client.get(
+                        self.source.feed_url,
+                        headers={"User-Agent": _USER_AGENT},
+                        follow_redirects=True,
+                    )
+                    response.raise_for_status()
+                feed = feedparser.parse(response.text)
+                if feed.bozo:
+                    logger.warning(
+                        "rss_parse_warning",
+                        extra={
+                            "source": self.source.name,
+                            "feed_url": self.source.feed_url,
+                            "error": str(feed.bozo_exception)[:200],
+                        },
+                    )
+                return feed
+            except httpx.RequestError as exc:
+                last_exc = exc
+                if attempt < _FETCH_MAX_ATTEMPTS:
+                    wait_seconds = _FETCH_BACKOFF_BASE ** attempt
+                    logger.warning(
+                        "rss_feed_retried",
+                        extra={
+                            "attempt": attempt,
+                            "feed_url": self.source.feed_url,
+                            "source": self.source.name,
+                            "wait_seconds": wait_seconds,
+                            "error": str(exc)[:200],
+                        },
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+                logger.error(
+                    "rss_fetch_failed",
                     extra={
-                        "event": "rss_parse_warning",
                         "source": self.source.name,
-                        "error": str(feed.bozo_exception),
+                        "feed_url": self.source.feed_url,
+                        "attempts": attempt,
+                        "error": str(exc)[:200],
                     },
                 )
-            return feed
-        except httpx.HTTPError as exc:
-            logger.error(
-                "Feed fetch failed",
-                extra={
-                    "event": "rss_fetch_failed",
-                    "source": self.source.name,
-                    "url": self.source.feed_url,
-                    "error": str(exc),
-                },
-            )
+                return None
+            except httpx.HTTPStatusError as exc:
+                logger.error(
+                    "rss_fetch_failed",
+                    extra={
+                        "source": self.source.name,
+                        "feed_url": self.source.feed_url,
+                        "status_code": exc.response.status_code,
+                    },
+                )
+                return None
+
+        if last_exc is not None:
             return None
+        return None

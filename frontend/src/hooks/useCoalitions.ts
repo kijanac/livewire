@@ -1,26 +1,24 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { fetchCoalitions } from "../api";
 import type { CoalitionsResponse } from "../types";
 
 export function useCoalitions() {
   const [data, setData] = useState<CoalitionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await fetchCoalitions();
-      setData(result);
-    } catch {
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    const ctrl = new AbortController();
+    setLoading(true);
+    setError(null);
+    fetchCoalitions(ctrl.signal)
+      .then((res) => setData(res))
+      .catch((err) => {
+        if (err.name !== "AbortError") setError(err);
+      })
+      .finally(() => setLoading(false));
+    return () => ctrl.abort();
+  }, []);
 
-  return { data, loading };
+  return { data, loading, error };
 }

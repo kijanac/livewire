@@ -23,6 +23,7 @@ class BillResponse(BaseModel):
     city: str
     city_name: str
     state: str
+    jurisdiction_level: str = "city"
     file_number: str | None = None
     title: str
     type_name: str | None = None
@@ -59,6 +60,7 @@ class CityResponse(BaseModel):
     id: str
     name: str
     state: str
+    level: str = "city"
 
 
 class StatusCount(BaseModel):

@@ -8,6 +8,7 @@ import { useStats } from "../hooks/useStats";
 import { useCities } from "../hooks/useCities";
 import { useTopics } from "../hooks/useTopics";
 import { useUpcoming } from "../hooks/useUpcoming";
+import { useErrorToast } from "../hooks/useErrorToast";
 
 interface DashboardProps {
   refreshKey: number;
@@ -15,10 +16,14 @@ interface DashboardProps {
 
 function Dashboard({ refreshKey }: DashboardProps) {
   const { bills, total, page, perPage, filters, loading: loadingBills, error, setPage, setFilters } = useBills(refreshKey);
-  const { stats, loading: loadingStats } = useStats(refreshKey);
+  const { stats, loading: loadingStats, error: statsError } = useStats(refreshKey);
   const cities = useCities();
   const topics = useTopics();
-  const { bills: upcomingBills, loading: loadingUpcoming } = useUpcoming(refreshKey);
+  const { bills: upcomingBills, loading: loadingUpcoming, error: upcomingError } = useUpcoming(refreshKey);
+
+  useErrorToast(error, "Failed to load bills");
+  useErrorToast(statsError, "Failed to load stats");
+  useErrorToast(upcomingError, "Failed to load upcoming bills");
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">

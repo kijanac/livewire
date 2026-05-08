@@ -11,8 +11,10 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "./Spinner";
 import { cn } from "@/lib/utils";
 import { formatDate, formatTopic, getStatusClasses } from "@/lib/bill-utils";
+import { ROW_STAGGER_MS, staggerDelay } from "@/lib/visual-tokens";
 import { ExternalLink } from "lucide-react";
 
 interface BillTableProps {
@@ -39,25 +41,7 @@ function BillTable({
     return (
       <div className="bg-card rounded-lg shadow-sm p-12 text-center">
         <div className="inline-flex items-center gap-2 text-muted-foreground">
-          <svg
-            className="animate-spin motion-reduce:animate-none h-5 w-5"
-            viewBox="0 0 24 24"
-            fill="none"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
+          <Spinner size={20} />
           Loading...
         </div>
       </div>
@@ -81,7 +65,7 @@ function BillTable({
         <TableHeader className="bg-muted/50">
           <TableRow>
             <TableHead className="px-2 py-2 sm:px-4 sm:py-3 text-xs uppercase tracking-wider font-bold text-muted-foreground">
-              City
+              Jurisdiction
             </TableHead>
             <TableHead className="px-2 py-2 sm:px-4 sm:py-3 text-xs uppercase tracking-wider font-bold text-muted-foreground">
               Bill
@@ -107,11 +91,16 @@ function BillTable({
                 bill.urgency === "urgent" && "border-l-4 border-l-primary",
                 bill.urgency === "soon" && "border-l-4 border-l-accent"
               )}
-              style={{ animationDelay: `${i * 30}ms` }}
+              style={staggerDelay(i, ROW_STAGGER_MS)}
             >
               <TableCell className="px-2 py-2 sm:px-4 sm:py-3 text-sm text-foreground align-top">
                 <div className="flex flex-col gap-0.5">
-                  <span className="font-medium">{bill.city_name}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium">{bill.city_name}</span>
+                    {bill.jurisdiction_level === "state" && (
+                      <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">State</Badge>
+                    )}
+                  </div>
                   {bill.urgency === "urgent" && (
                     <Badge className="bg-primary text-primary-foreground w-fit">
                       This Week

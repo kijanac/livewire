@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { fetchBills } from "../api";
 import type { Bill } from "../types";
 
@@ -6,29 +6,31 @@ export function useBillSearch() {
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(false);
-
-  const doSearch = useCallback(async (query: string) => {
-    if (!query.trim()) {
-      setResults([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const data = await fetchBills({ search: query, per_page: 20 });
-      setResults(data.bills);
-    } catch {
-      // Search failure is non-critical
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    if (!search.trim()) {
+      setResults([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    const ctrl = new AbortController();
     const timer = setTimeout(() => {
-      doSearch(search);
+      setLoading(true);
+      setError(null);
+      fetchBills({ search, per_page: 20 }, ctrl.signal)
+        .then((data) => setResults(data.bills))
+        .catch((err) => {
+          if (err.name !== "AbortError") setError(err);
+        })
+        .finally(() => setLoading(false));
     }, 300);
-    return () => clearTimeout(timer);
-  }, [search, doSearch]);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [search]);
 
-  return { search, setSearch, results, loading };
+  return { search, setSearch, results, loading, error };
 }

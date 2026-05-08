@@ -1,24 +1,26 @@
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 import httpx
+from pydantic import BaseModel, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.ingesters.base import BaseIngester
 from app.models import Bill
 
 logger = logging.getLogger(__name__)
 
-_PER_PAGE = 20
-_LOOKBACK_DAYS = 2
-_MAX_RETRIES_ON_429 = 4
 _DEFAULT_RETRY_AFTER_SECONDS = 60.0
 
 
+# ---------------------------------------------------------------------------
+# Field-level parsers
+# ---------------------------------------------------------------------------
+
 def _parse_retry_after(value: str | None) -> float:
-    """Parse the Retry-After header (seconds or HTTP-date), falling back to a default."""
     if not value:
         return _DEFAULT_RETRY_AFTER_SECONDS
     try:
@@ -34,7 +36,6 @@ def _parse_retry_after(value: str | None) -> float:
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
-    """Parse an ISO-format datetime/date string, returning None on failure."""
     if not value:
         return None
     try:
@@ -43,15 +44,82 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return None
 
 
-def _parse_date(value: str | None) -> datetime | None:
-    """Parse a YYYY-MM-DD date string into a UTC datetime, returning None on failure."""
+def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
     try:
-        return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return datetime.strptime(value, "%Y-%m-%d").date()
     except (ValueError, TypeError):
         return None
 
+
+# ---------------------------------------------------------------------------
+# API payload models
+# ---------------------------------------------------------------------------
+
+class OpenStatesBillPayload(BaseModel):
+    """Single OpenStates bill from the v3 API. Use model_validate(raw_dict)."""
+
+    model_config = {"extra": "ignore"}
+
+    id: str
+    title: str
+    identifier: str | None = None
+    classification: list[str] = []
+    latest_action_description: str | None = None
+    from_organization_name: str | None = None
+    first_action_date: date | None = None
+    updated_at: datetime | None = None
+    openstates_url: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        # Pull nested from_organization.name flat
+        org = data.pop("from_organization", None) or {}
+        data["from_organization_name"] = org.get("name")
+        # Strip whitespace from title
+        if "title" in data and isinstance(data["title"], str):
+            data["title"] = data["title"].strip()
+        # Parse date strings
+        data["first_action_date"] = _parse_date(data.get("first_action_date"))
+        data["updated_at"] = _parse_datetime(data.get("updated_at"))
+        return data
+
+    @model_validator(mode="after")
+    def _require_non_empty(self) -> "OpenStatesBillPayload":
+        if not self.id or not self.title:
+            raise ValueError("id and title must be non-empty")
+        return self
+
+
+class OpenStatesPage(BaseModel):
+    """A page of OpenStates bill results + pagination."""
+
+    results: list[OpenStatesBillPayload]
+    max_page: int
+
+    @classmethod
+    def model_validate(cls, raw: object) -> "OpenStatesPage":  # type: ignore[override]
+        if not isinstance(raw, dict):
+            raise ValueError("expected dict")
+        pagination = raw.get("pagination") or {}
+        raw_results = raw.get("results") or []
+        bills: list[OpenStatesBillPayload] = []
+        for item in raw_results:
+            if isinstance(item, dict):
+                try:
+                    bills.append(OpenStatesBillPayload.model_validate(item))
+                except ValidationError:
+                    pass  # skip malformed bills
+        return cls(results=bills, max_page=pagination.get("max_page", 1))
+
+
+# ---------------------------------------------------------------------------
+# Ingester
+# ---------------------------------------------------------------------------
 
 class OpenStatesIngester(BaseIngester):
     """Fetch state-legislature bills from the OpenStates v3 API."""
@@ -71,26 +139,25 @@ class OpenStatesIngester(BaseIngester):
         self.city_name = f"{state_name} State Legislature"
 
     def ingest(self, session: Session) -> tuple[int, int]:
-        """Fetch recently-updated bills and upsert. Returns (added, updated)."""
         added = 0
         updated = 0
 
         if not self.api_key:
             logger.warning(
-                "OpenStates ingestion skipped: no API key configured",
-                extra={"event": "openstates_no_api_key", "state": self.state_code},
+                "openstates_no_api_key",
+                extra={"state": self.state_code},
             )
             return added, updated
 
-        cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=_LOOKBACK_DAYS)).strftime(
-            "%Y-%m-%d"
-        )
+        cutoff = (
+            datetime.now(tz=timezone.utc)
+            - timedelta(days=settings.OPENSTATES_LOOKBACK_DAYS)
+        ).strftime("%Y-%m-%d")
         url = f"{self.base_url}/bills"
 
         logger.info(
-            "OpenStates ingestion started",
+            "openstates_ingestion_started",
             extra={
-                "event": "openstates_ingestion_started",
                 "state": self.state_code,
                 "state_name": self.state_name,
                 "updated_since": cutoff,
@@ -106,17 +173,13 @@ class OpenStatesIngester(BaseIngester):
                     "updated_since": cutoff,
                     "sort": "updated_desc",
                     "page": page,
-                    "per_page": _PER_PAGE,
+                    "per_page": settings.OPENSTATES_PER_PAGE,
                 }
-                payload = self._fetch_page(client, url, params)
-                if payload is None:
+                api_page = self._fetch_page(client, url, params)
+                if api_page is None:
                     break
 
-                results = payload.get("results", [])
-                if not results:
-                    break
-
-                for bill in results:
+                for bill in api_page.results:
                     if self._upsert_bill(session, bill):
                         added += 1
                     else:
@@ -125,16 +188,13 @@ class OpenStatesIngester(BaseIngester):
 
                 session.commit()
 
-                pagination = payload.get("pagination", {})
-                max_page = pagination.get("max_page", page)
-                if page >= max_page:
+                if page >= api_page.max_page:
                     break
                 page += 1
 
         logger.info(
-            "OpenStates ingestion completed",
+            "openstates_ingestion_completed",
             extra={
-                "event": "openstates_ingestion_completed",
                 "state": self.state_code,
                 "state_name": self.state_name,
                 "bills_added": added,
@@ -147,9 +207,12 @@ class OpenStatesIngester(BaseIngester):
 
     def _fetch_page(
         self, client: httpx.Client, url: str, params: dict
-    ) -> dict | None:
-        """Fetch one page. Honors `Retry-After` on 429 and retries up to _MAX_RETRIES_ON_429."""
-        for attempt in range(_MAX_RETRIES_ON_429 + 1):
+    ) -> OpenStatesPage | None:
+        max_attempts = 5
+        backoff_base = 1.5
+        retryable_5xx = {500, 502, 503, 504}
+
+        for attempt in range(1, max_attempts + 1):
             try:
                 response = client.get(
                     url,
@@ -158,9 +221,8 @@ class OpenStatesIngester(BaseIngester):
                 )
             except httpx.RequestError as exc:
                 logger.error(
-                    "OpenStates request failed",
+                    "openstates_request_error",
                     extra={
-                        "event": "openstates_request_error",
                         "state": self.state_code,
                         "page": params.get("page"),
                         "error": str(exc),
@@ -169,72 +231,78 @@ class OpenStatesIngester(BaseIngester):
                 return None
 
             if response.status_code == 200:
-                return response.json()
+                try:
+                    return OpenStatesPage.model_validate(response.json())
+                except (ValidationError, ValueError, TypeError):
+                    logger.error(
+                        "openstates_parse_error",
+                        extra={
+                            "state": self.state_code,
+                            "page": params.get("page"),
+                        },
+                    )
+                    return None
 
             if response.status_code == 429:
                 retry_after = _parse_retry_after(response.headers.get("Retry-After"))
                 logger.warning(
-                    "OpenStates rate limit hit; backing off",
+                    "openstates_rate_limited",
                     extra={
-                        "event": "openstates_rate_limited",
                         "state": self.state_code,
                         "page": params.get("page"),
-                        "attempt": attempt + 1,
+                        "attempt": attempt,
                         "retry_after_seconds": retry_after,
                     },
                 )
-                if attempt < _MAX_RETRIES_ON_429:
+                if attempt < max_attempts:
                     time.sleep(retry_after)
                     continue
                 return None
 
+            if response.status_code in retryable_5xx and attempt < max_attempts:
+                wait_seconds = backoff_base ** attempt
+                time.sleep(wait_seconds)
+                continue
+
             logger.error(
-                "OpenStates API returned an error status",
+                "openstates_api_error",
                 extra={
-                    "event": "openstates_api_error",
                     "state": self.state_code,
                     "page": params.get("page"),
                     "status_code": response.status_code,
-                    "body": response.text[:300],
+                    "body": response.text[:200],
                 },
             )
             return None
         return None
 
-    def _upsert_bill(self, session: Session, bill: dict) -> bool:
-        """Upsert a single OpenStates bill row. Returns True if newly added."""
-        source_id = bill.get("id")
-        title = (bill.get("title") or "").strip()
-        if not source_id or not title:
-            return False
-
-        classification = bill.get("classification") or []
-        type_name = classification[0] if classification else None
+    def _upsert_bill(self, session: Session, bill: OpenStatesBillPayload) -> bool:
+        type_name = bill.classification[0] if bill.classification else None
 
         bill_data = {
             "source": "openstates",
-            "source_id": source_id,
+            "source_id": bill.id,
             "city": self.city_key,
             "city_name": self.city_name,
             "state": self.state_code,
             "jurisdiction_level": "state",
-            "file_number": bill.get("identifier"),
-            "title": title,
+            "file_number": bill.identifier,
+            "title": bill.title,
             "type_name": type_name,
-            "status": bill.get("latest_action_description"),
-            "body_name": bill.get("from_organization", {}).get("name"),
-            "intro_date": _parse_date(bill.get("first_action_date")),
+            "status": bill.latest_action_description,
+            "body_name": bill.from_organization_name,
+            "intro_date": bill.first_action_date,
             "agenda_date": None,
             "passed_date": None,
             "enactment_number": None,
             "enactment_date": None,
-            "updated_at": _parse_datetime(bill.get("updated_at")),
-            "url": bill.get("openstates_url"),
+            "updated_at": bill.updated_at,
+            "url": bill.openstates_url,
         }
 
         existing = (
             session.query(Bill)
-            .filter_by(source="openstates", source_id=source_id, city=self.city_key)
+            .filter_by(source="openstates", source_id=bill.id, city=self.city_key)
             .first()
         )
         if existing:

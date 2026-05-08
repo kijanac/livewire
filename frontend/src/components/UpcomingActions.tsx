@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatShortDate, daysUntil } from "@/lib/bill-utils";
+import { staggerDelay } from "@/lib/visual-tokens";
 const BriefingPanel = lazy(() => import("./BriefingPanel"));
 
 interface UpcomingActionsProps {
@@ -47,7 +48,7 @@ function UpcomingActions({ bills, loading }: UpcomingActionsProps) {
         Coming Up
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {bills.slice(0, 6).map((bill) => {
+        {bills.slice(0, 6).map((bill, i) => {
           const days = daysUntil(bill.agenda_date);
           const isUrgent = bill.urgency === "urgent";
 
@@ -64,7 +65,7 @@ function UpcomingActions({ bills, loading }: UpcomingActionsProps) {
                     ? "border-l-4 border-l-primary"
                     : "border-l-4 border-l-accent"
                 )}
-                style={{ animationDelay: `${bills.indexOf(bill) * 75}ms` }}
+                style={staggerDelay(i)}
               >
                 <CardContent>
                   <div className="flex items-center justify-between mb-1">

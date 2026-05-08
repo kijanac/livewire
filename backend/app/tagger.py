@@ -6,7 +6,8 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Bill
+from app.llm import call_openrouter
+from app.models import Bill, BillTopic
 
 logger = logging.getLogger(__name__)
 
@@ -47,33 +48,28 @@ Rules:
 - Respond with ONLY the JSON object, no other text"""
 
 
-def _call_openrouter(bills: list[dict]) -> dict:
-    """Send a batch of bills to OpenRouter for topic classification."""
+def _replace_topic_links(session: Session, bill_id: int, topics: list[str]) -> None:
+    """Atomically replace BillTopic rows for a bill with the given topics."""
+    session.query(BillTopic).filter(BillTopic.bill_id == bill_id).delete(
+        synchronize_session=False,
+    )
+    for topic in topics:
+        session.add(BillTopic(bill_id=bill_id, topic_name=topic))
+
+
+def _classify_bills(bills: list[dict]) -> dict:
+    """Send a batch of bills to OpenRouter for topic classification. Returns parsed JSON dict."""
     bill_lines = "\n".join(f"ID {b['id']}: {b['title']}" for b in bills)
     user_prompt = f"Classify these bills:\n\n{bill_lines}"
 
-    payload = {
-        "model": settings.OPENROUTER_MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.1,
-        "response_format": {"type": "json_object"},
-    }
-    headers = {
-        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    with httpx.Client(timeout=60.0) as client:
-        response = client.post(
-            settings.OPENROUTER_BASE_URL,
-            json=payload,
-            headers=headers,
-        )
-        response.raise_for_status()
-        return response.json()
+    raw = call_openrouter(
+        user_prompt,
+        system_prompt=SYSTEM_PROMPT,
+        temperature=0.1,
+        timeout=60.0,
+        response_format={"type": "json_object"},
+    )
+    return json.loads(raw)
 
 
 def tag_untagged_bills(session: Session, batch_size: int = 20) -> int:
@@ -92,31 +88,28 @@ def tag_untagged_bills(session: Session, batch_size: int = 20) -> int:
     bill_map = {b.id: b for b in untagged}
 
     try:
-        result = _call_openrouter(bills_data)
-        content = result["choices"][0]["message"]["content"]
-        classifications = json.loads(content)
-    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        classifications = _classify_bills(bills_data)
+    except httpx.HTTPError as exc:
         logger.error(
-            "OpenRouter API call failed",
+            "tagging_api_error",
             extra={
-                "event": "tagging_api_error",
-                "error": str(exc),
-                "batch_size": len(bills_data),
+                "error": str(exc)[:200],
+                "count": len(bills_data),
             },
         )
         return 0
     except (json.JSONDecodeError, KeyError, IndexError) as exc:
         logger.error(
-            "Failed to parse tagging response",
+            "tagging_parse_error",
             extra={
-                "event": "tagging_parse_error",
-                "error": str(exc),
-                "batch_size": len(bills_data),
+                "error": str(exc)[:200],
+                "count": len(bills_data),
             },
         )
         # Mark these bills with empty topics to avoid infinite retries
         for bill in untagged:
             bill.topics = "[]"
+            _replace_topic_links(session, bill.id, [])
         session.commit()
         return len(untagged)
 
@@ -131,27 +124,26 @@ def tag_untagged_bills(session: Session, batch_size: int = 20) -> int:
         if not bill:
             continue
 
-        # Validate topics against allowed list
         valid = [t for t in topics if t in VALID_TOPICS]
         if not valid:
             valid = ["other"]
 
         bill.topics = json.dumps(valid)
+        _replace_topic_links(session, bill_id, valid)
         tagged += 1
 
-    # Mark any bills that weren't in the response
     for bill in untagged:
         if bill.topics is None:
             bill.topics = "[]"
+            _replace_topic_links(session, bill.id, [])
 
     session.commit()
 
     logger.info(
-        "Topic tagging batch completed",
+        "tagging_batch_completed",
         extra={
-            "event": "tagging_batch_completed",
             "bills_tagged": tagged,
-            "batch_size": len(bills_data),
+            "count": len(bills_data),
         },
     )
 
@@ -161,10 +153,7 @@ def tag_untagged_bills(session: Session, batch_size: int = 20) -> int:
 def tag_all_untagged_bills(session: Session) -> int:
     """Tag all untagged bills in batches. Returns total count tagged."""
     if not settings.OPENROUTER_API_KEY:
-        logger.info(
-            "Skipping tagging, no API key configured",
-            extra={"event": "tagging_skipped_no_key"},
-        )
+        logger.info("tagging_skipped_no_key")
         return 0
 
     total_tagged = 0
@@ -176,10 +165,7 @@ def tag_all_untagged_bills(session: Session) -> int:
         time.sleep(0.5)
 
     logger.info(
-        "Topic tagging completed",
-        extra={
-            "event": "tagging_all_completed",
-            "total_bills_tagged": total_tagged,
-        },
+        "tagging_all_completed",
+        extra={"bills_tagged": total_tagged},
     )
     return total_tagged

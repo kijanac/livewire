@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatTopic } from "@/lib/bill-utils";
+import { Search } from "lucide-react";
 
 interface FiltersProps {
   filters: BillFilters;
@@ -98,23 +99,10 @@ function Filters({ filters, cities, topics, onChange }: FiltersProps) {
 
   return (
     <div className="mb-6 space-y-2">
-      {/* Primary filters: search, city, issue — always visible */}
+      {/* Primary filters: search, jurisdiction, city, issue — always visible */}
       <div className="flex flex-wrap gap-2 sm:gap-3">
         <div className="relative flex-1 min-w-[180px]">
-          <svg
-            className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground z-10"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth="2"
-            stroke="currentColor"
-            aria-hidden="true"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
-            />
-          </svg>
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground z-10" aria-hidden="true" />
           <Input
             type="text"
             value={filters.search}
@@ -123,6 +111,18 @@ function Filters({ filters, cities, topics, onChange }: FiltersProps) {
             className="w-full pl-9"
           />
         </div>
+
+        <FilterSelect
+          value={filters.jurisdiction_level}
+          onValueChange={(val) => {
+            update("jurisdiction_level", val);
+            update("city", "");
+          }}
+          placeholder="All Levels"
+        >
+          <SelectItem value="city">City Council</SelectItem>
+          <SelectItem value="state">State Legislature</SelectItem>
+        </FilterSelect>
 
         <FilterSelect
           value={filters.city}

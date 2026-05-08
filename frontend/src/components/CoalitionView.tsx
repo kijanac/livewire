@@ -1,16 +1,12 @@
 import { useState } from "react";
 import { useCoalitions } from "../hooks/useCoalitions";
+import { useErrorToast } from "../hooks/useErrorToast";
 import type { TopicCoalition, CityAlignment } from "../types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "./Spinner";
 import { cn } from "@/lib/utils";
-
-const MOMENTUM_CONFIG = {
-  advancing: { label: "Advancing", color: "bg-green-500", textColor: "text-green-600 dark:text-green-400" },
-  stalled: { label: "Stalled", color: "bg-red-500", textColor: "text-red-600 dark:text-red-400" },
-  stable: { label: "Stable", color: "bg-amber-400", textColor: "text-amber-600 dark:text-amber-400" },
-  mixed: { label: "Mixed", color: "bg-muted-foreground/40", textColor: "text-muted-foreground" },
-} as const;
+import { CITY_STAGGER_MS, MOMENTUM_CONFIG, staggerDelay } from "@/lib/visual-tokens";
 
 function MomentumBadge({ momentum }: { momentum: string }) {
   const config = MOMENTUM_CONFIG[momentum as keyof typeof MOMENTUM_CONFIG] ?? MOMENTUM_CONFIG.stable;
@@ -115,7 +111,8 @@ function TopicCard({ topic }: { topic: TopicCoalition }) {
 }
 
 function CoalitionView() {
-  const { data, loading } = useCoalitions();
+  const { data, loading, error } = useCoalitions();
+  useErrorToast(error, "Failed to load coalitions");
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -128,10 +125,7 @@ function CoalitionView() {
 
       {loading && (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
-          <svg className="animate-spin motion-reduce:animate-none h-6 w-6 text-primary" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
+          <Spinner size={24} className="text-primary" />
           <span className="text-sm text-muted-foreground">Mapping alliances...</span>
         </div>
       )}
@@ -152,7 +146,7 @@ function CoalitionView() {
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {data.topics.map((topic, i) => (
-              <div key={topic.topic} className="animate-fade-up" style={{ animationDelay: `${i * 80}ms` }}>
+              <div key={topic.topic} className="animate-fade-up" style={staggerDelay(i, CITY_STAGGER_MS)}>
                 <TopicCard topic={topic} />
               </div>
             ))}

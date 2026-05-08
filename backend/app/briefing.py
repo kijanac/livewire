@@ -4,9 +4,11 @@ import xml.etree.ElementTree as ET
 from html import unescape
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.llm import call_openrouter
 from app.models import Bill, BillBriefing
 
 logger = logging.getLogger(__name__)
@@ -36,49 +38,15 @@ Related news headlines:
 Respond with ONLY the JSON object."""
 
 
-def call_openrouter(
-    prompt: str,
-    *,
-    system_prompt: str | None = None,
-    temperature: float = 0.3,
-    max_tokens: int | None = None,
-    json_mode: bool = False,
-    timeout: float = 45.0,
-) -> str:
-    """Call OpenRouter and return the raw content string."""
-    messages: list[dict] = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
-
-    payload: dict = {
-        "model": settings.OPENROUTER_MODEL,
-        "messages": messages,
-        "temperature": temperature,
-    }
-    if max_tokens:
-        payload["max_tokens"] = max_tokens
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-    headers = {
-        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(
-            settings.OPENROUTER_BASE_URL,
-            json=payload,
-            headers=headers,
-        )
-        response.raise_for_status()
-        result = response.json()
-        return result["choices"][0]["message"]["content"]
-
-
 def _call_llm(prompt: str) -> dict:
     """Call OpenRouter and parse JSON response."""
-    return json.loads(call_openrouter(prompt, json_mode=True))
+    return json.loads(
+        call_openrouter(
+            prompt,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+    )
 
 
 def generate_briefing_text(bill: Bill, news: list[dict]) -> dict:
@@ -111,10 +79,10 @@ def generate_briefing_text(bill: Bill, news: list[dict]) -> dict:
             "organizing": parsed.get("organizing", ""),
             "reception": parsed.get("reception", ""),
         }
-    except Exception as exc:
-        logger.error(
-            "Briefing generation failed",
-            extra={"event": "briefing_generation_failed", "bill_id": bill.id, "error": str(exc)},
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError) as exc:
+        logger.exception(
+            "briefing_generation_failed",
+            extra={"bill_id": bill.id, "error": str(exc)[:200]},
         )
         return {"summary": "", "impact": "", "organizing": "", "reception": ""}
 
@@ -149,15 +117,15 @@ def fetch_news_articles(query: str, max_results: int = 8) -> list[dict]:
                 })
 
         logger.info(
-            "News articles fetched",
-            extra={"event": "news_fetched", "query": search_query, "count": len(articles)},
+            "news_fetched",
+            extra={"query": search_query, "count": len(articles)},
         )
         return articles
 
-    except Exception as exc:
+    except (httpx.HTTPError, ET.ParseError) as exc:
         logger.error(
-            "News fetch failed",
-            extra={"event": "news_fetch_failed", "query": search_query, "error": str(exc)},
+            "news_fetch_failed",
+            extra={"query": search_query, "error": str(exc)[:200]},
         )
         return []
 
@@ -178,18 +146,26 @@ def _build_news_query(bill: Bill) -> str:
     try:
         query = call_openrouter(prompt, temperature=0.1, max_tokens=30).strip().strip('"')
         return query[:80]
-    except Exception:
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "news_query_extraction_failed",
+            extra={"bill_id": bill.id, "error": str(exc)[:200]},
+        )
         words = bill.title.split()[:6]
         return f"{bill.city_name} {' '.join(words)}"
 
 
 def get_or_create_briefing(session: Session, bill: Bill) -> BillBriefing:
-    """Get cached briefing or generate a new one."""
+    """Get cached briefing or generate a new one.
+
+    Race-tolerant: if two requests for the same bill_id arrive in parallel,
+    the loser of the insert race re-selects the winner's row instead of erroring.
+    A unique constraint on BillBriefing.bill_id is required for this to fire.
+    """
     existing = session.query(BillBriefing).filter(BillBriefing.bill_id == bill.id).first()
     if existing:
         return existing
 
-    # Build a focused news query, then fetch
     news_query = _build_news_query(bill)
     news = fetch_news_articles(news_query)
 
@@ -204,13 +180,23 @@ def get_or_create_briefing(session: Session, bill: Bill) -> BillBriefing:
         news_json=json.dumps(news),
     )
     session.add(briefing)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        winner = session.query(BillBriefing).filter(BillBriefing.bill_id == bill.id).first()
+        if winner is not None:
+            logger.info(
+                "briefing_race_resolved",
+                extra={"bill_id": bill.id},
+            )
+            return winner
+        raise
     session.refresh(briefing)
 
     logger.info(
-        "Briefing generated",
+        "briefing_generated",
         extra={
-            "event": "briefing_generated",
             "bill_id": bill.id,
             "has_summary": bool(briefing_text["summary"]),
             "news_count": len(news),

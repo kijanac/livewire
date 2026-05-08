@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatTopic } from "@/lib/bill-utils";
+import { staggerDelay } from "@/lib/visual-tokens";
 
 interface StatsCardsProps {
   stats: StatsResponse | null;
@@ -70,7 +71,7 @@ function StatsCards({ stats, loading }: StatsCardsProps) {
       </Card>
 
       {/* Trending Issues */}
-      <Card className="animate-fade-up" style={{ animationDelay: "75ms" }}>
+      <Card className="animate-fade-up" style={staggerDelay(1)}>
         <CardContent>
           <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
             Trending Issues
@@ -95,7 +96,7 @@ function StatsCards({ stats, loading }: StatsCardsProps) {
       </Card>
 
       {/* Hottest City */}
-      <Card className="animate-fade-up" style={{ animationDelay: "150ms" }}>
+      <Card className="animate-fade-up" style={staggerDelay(2)}>
         <CardContent>
           <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
             Hottest City
@@ -121,7 +122,7 @@ function StatsCards({ stats, loading }: StatsCardsProps) {
           "animate-fade-up",
           stats.new_bills_7d > 0 && "bg-accent text-accent-foreground border-accent"
         )}
-        style={{ animationDelay: "225ms" }}
+        style={staggerDelay(3)}
       >
         <CardContent>
           <div

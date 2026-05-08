@@ -5,9 +5,13 @@ import type { CollectionStub } from "../types";
 const STORAGE_KEY = "bill_tracker_collections";
 
 function loadStubs(): CollectionStub[] {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return [];
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  } catch {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error("useCollectionStubs: failed to parse storage", err);
     return [];
   }
 }
@@ -37,6 +41,7 @@ export function getCollectionName(slug: string): string | null {
 export function useCollectionStubs() {
   const [stubs, setStubs] = useState<CollectionStub[]>(loadStubs);
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     const refresh = () => setStubs(loadStubs());
@@ -47,18 +52,19 @@ export function useCollectionStubs() {
   const create = async (name: string) => {
     if (!name.trim()) return;
     setCreating(true);
+    setError(null);
     try {
       const collection = await createCollection({ name: name.trim() });
       const stub = { slug: collection.slug, name: collection.name };
       addStubToStorage(stub);
       setStubs(loadStubs());
       window.location.hash = `#/collection/${collection.slug}`;
-    } catch {
-      // Creation failure
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setCreating(false);
     }
   };
 
-  return { stubs, creating, create };
+  return { stubs, creating, create, error };
 }

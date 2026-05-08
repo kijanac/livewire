@@ -7,8 +7,8 @@ from html.parser import HTMLParser
 import httpx
 from sqlalchemy.orm import Session
 
-from app.briefing import call_openrouter
 from app.config import settings
+from app.llm import call_openrouter
 from app.models import Story
 from app.tagger import VALID_TOPICS
 
@@ -89,20 +89,20 @@ def triage_stories(session: Session, batch_size: int = 15) -> int:
             user_prompt,
             system_prompt=TRIAGE_PROMPT,
             temperature=0.1,
-            json_mode=True,
             timeout=60.0,
+            response_format={"type": "json_object"},
         )
         classifications = json.loads(raw)
-    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+    except httpx.HTTPError as exc:
         logger.error(
-            "Story triage API call failed",
-            extra={"event": "story_triage_api_error", "error": str(exc)},
+            "story_triage_api_error",
+            extra={"error": str(exc)[:200]},
         )
         return 0
     except (json.JSONDecodeError, KeyError, IndexError) as exc:
         logger.error(
-            "Story triage parse failed",
-            extra={"event": "story_triage_parse_error", "error": str(exc)},
+            "story_triage_parse_error",
+            extra={"error": str(exc)[:200]},
         )
         # Mark as irrelevant to avoid infinite retries
         for story in unclassified:
@@ -139,8 +139,8 @@ def triage_stories(session: Session, batch_size: int = 15) -> int:
 
     session.commit()
     logger.info(
-        "Story triage batch completed",
-        extra={"event": "story_triage_completed", "classified": classified},
+        "story_triage_completed",
+        extra={"count": classified},
     )
     return classified
 
@@ -159,8 +159,8 @@ def triage_all_stories(session: Session) -> int:
         time.sleep(0.5)
 
     logger.info(
-        "Story triage completed",
-        extra={"event": "story_triage_all_completed", "total": total},
+        "story_triage_all_completed",
+        extra={"count": total},
     )
     return total
 
@@ -226,13 +226,12 @@ def _fetch_article_body(url: str) -> str | None:
         body = "\n\n".join(parser.paragraphs)
         return body[:3000]
 
-    except Exception as exc:
+    except httpx.HTTPError as exc:
         logger.warning(
-            "Article fetch failed",
+            "article_fetch_failed",
             extra={
-                "event": "article_fetch_failed",
-                "url": url,
-                "error": str(exc),
+                "endpoint": url,
+                "error": str(exc)[:200],
             },
         )
         return None
@@ -266,14 +265,13 @@ def enrich_stories(session: Session, batch_size: int = 10) -> int:
                     title=story.title,
                     body=content,
                 )
-                story.analysis = call_openrouter(prompt)
-            except Exception as exc:
+                story.analysis = call_openrouter(prompt, temperature=0.3)
+            except httpx.HTTPError as exc:
                 logger.warning(
-                    "Story analysis generation failed",
+                    "story_analysis_failed",
                     extra={
-                        "event": "story_analysis_failed",
                         "story_id": story.id,
-                        "error": str(exc),
+                        "error": str(exc)[:200],
                     },
                 )
 
@@ -283,8 +281,8 @@ def enrich_stories(session: Session, batch_size: int = 10) -> int:
 
     session.commit()
     logger.info(
-        "Story enrichment batch completed",
-        extra={"event": "story_enrichment_completed", "enriched": enriched},
+        "story_enrichment_completed",
+        extra={"count": enriched},
     )
     return enriched
 
@@ -302,7 +300,7 @@ def enrich_all_stories(session: Session) -> int:
         total += count
 
     logger.info(
-        "Story enrichment completed",
-        extra={"event": "story_enrichment_all_completed", "total": total},
+        "story_enrichment_all_completed",
+        extra={"count": total},
     )
     return total
