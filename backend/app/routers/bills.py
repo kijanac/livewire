@@ -257,8 +257,9 @@ def list_cities() -> list[CityResponse]:
 def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
     try:
         return build_stats(db)
-    except Exception:
+    except Exception as exc:
         logger.exception("stats_endpoint_failed")
+        # Return empty stats but also log the real error type
         return StatsResponse(
             moving_this_week=0,
             hot_topics=[],
@@ -267,6 +268,21 @@ def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
             by_status=[],
             by_city=[],
         )
+
+
+@router.get("/stats/debug")
+def get_stats_debug(db: Session = Depends(get_db)):
+    """Return raw stats or the actual error for debugging."""
+    try:
+        result = build_stats(db)
+        return {"ok": True, "moving_this_week": result.moving_this_week,
+                "new_bills_7d": result.new_bills_7d,
+                "hot_topics_count": len(result.hot_topics),
+                "by_status_count": len(result.by_status),
+                "by_city_count": len(result.by_city)}
+    except Exception as exc:
+        import traceback
+        return {"ok": False, "error": str(exc), "traceback": traceback.format_exc()}
 
 
 @router.post("/ingest", response_model=None)
