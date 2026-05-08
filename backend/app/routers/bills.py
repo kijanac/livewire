@@ -10,6 +10,8 @@ from app.briefing import get_or_create_briefing
 from app.config import settings
 from app.database import SessionLocal, get_db
 from app.ingesters.legistar import LegistarIngester
+from app.ingesters.legistar_html import HTMLLegistarIngester
+from app.ingesters.openstates import OpenStatesIngester
 from app.models import Bill, BillBriefing, BillDocument, CollectionItem
 from app.schemas import (
     BillBriefingResponse,
@@ -273,14 +275,9 @@ def run_ingest(
         cities_to_ingest = settings.CITIES
 
     for city_key, city_config in cities_to_ingest.items():
-        ingester = LegistarIngester(
-            city_key=city_key,
-            city_config=city_config,
-            base_url=settings.LEGISTAR_BASE_URL,
-        )
         session = SessionLocal()
         try:
-            added, updated = ingester.ingest(session)
+            added, updated = _try_ingest_city(city_key, city_config, session)
             total_added += added
             total_updated += updated
         except Exception:
@@ -291,11 +288,57 @@ def run_ingest(
         finally:
             session.close()
 
+    # Also run OpenStates state legislature ingest if configured
+    if not body or not body.city:
+        if settings.OPENSTATES_API_KEY:
+            for state_code, state_config in settings.STATES.items():
+                ingester = OpenStatesIngester(
+                    state_code=state_code,
+                    state_name=state_config["name"],
+                    base_url=settings.OPENSTATES_BASE_URL,
+                    api_key=settings.OPENSTATES_API_KEY,
+                )
+                session = SessionLocal()
+                try:
+                    added, updated = ingester.ingest(session)
+                    total_added += added
+                    total_updated += updated
+                except Exception:
+                    logger.exception(
+                        "openstates_ingestion_failed",
+                        extra={"state": state_code},
+                    )
+                finally:
+                    session.close()
+
     return IngestResponse(
         message="Ingestion complete",
         bills_added=total_added,
         bills_updated=total_updated,
     )
+
+
+def _try_ingest_city(city_key: str, city_config: dict, session) -> tuple[int, int]:
+    """Try API ingester first, fall back to HTML scraping."""
+    api_ingester = LegistarIngester(
+        city_key=city_key,
+        city_config=city_config,
+        base_url=settings.LEGISTAR_BASE_URL,
+    )
+    try:
+        added, updated = api_ingester.ingest(session)
+        return added, updated
+    except Exception as exc:
+        logger.warning(
+            "api_ingest_failed_falling_back_to_html",
+            extra={"city": city_key, "error": str(exc)[:200]},
+        )
+        session.rollback()
+
+    html_ingester = HTMLLegistarIngester(
+        city_key=city_key, city_config=city_config
+    )
+    return html_ingester.ingest(session)
 
 
 @router.post("/tag", response_model=dict)

@@ -13,10 +13,9 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import SessionLocal, init_db
-from app.ingesters.legistar import LegistarIngester
-from app.ingesters.legistar_html import HTMLLegistarIngester
 from app.ingesters.openstates import OpenStatesIngester
 from app.ingesters.rss import RSSIngester
+from app.routers.bills import _try_ingest_city
 from app.logging_config import setup_logging
 from app.middleware import RequestIDMiddleware
 from app.models import Story, StorySource
@@ -38,7 +37,7 @@ def run_ingestion_all_cities() -> None:
     for city_key, city_config in settings.CITIES.items():
         session = SessionLocal()
         try:
-            added, updated = _ingest_city(city_key, city_config, session)
+            added, updated = _try_ingest_city(city_key, city_config, session)
             logger.info(
                 "scheduled_ingestion_city_completed",
                 extra={
@@ -57,29 +56,6 @@ def run_ingestion_all_cities() -> None:
 
     logger.info("scheduled_ingestion_finished")
 
-
-def _ingest_city(city_key: str, city_config: dict, session) -> tuple[int, int]:
-    """Try API ingester first, fall back to HTML scraping on failure."""
-    api_ingester = LegistarIngester(
-        city_key=city_key,
-        city_config=city_config,
-        base_url=settings.LEGISTAR_BASE_URL,
-    )
-    try:
-        added, updated = api_ingester.ingest(session)
-        api_ingester.ingest_officials(session)
-        return added, updated
-    except Exception as exc:
-        logger.warning(
-            "api_ingest_failed_falling_back_to_html",
-            extra={"city": city_key, "error": str(exc)[:200]},
-        )
-        session.rollback()
-
-    html_ingester = HTMLLegistarIngester(
-        city_key=city_key, city_config=city_config
-    )
-    return html_ingester.ingest(session)
 
     # --- State legislatures via OpenStates ---
     if settings.OPENSTATES_API_KEY:
