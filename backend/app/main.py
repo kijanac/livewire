@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import SessionLocal, init_db
 from app.ingesters.legistar import LegistarIngester
+from app.ingesters.legistar_html import HTMLLegistarIngester
 from app.ingesters.openstates import OpenStatesIngester
 from app.ingesters.rss import RSSIngester
 from app.logging_config import setup_logging
@@ -31,25 +32,19 @@ scheduler = BackgroundScheduler()
 
 
 def run_ingestion_all_cities() -> None:
-    """Run Legistar ingestion for every configured city."""
+    """Run Legistar ingestion for every configured city.
+    Falls back to HTML scraping when the web API is unavailable."""
     logger.info("scheduled_ingestion_started")
     for city_key, city_config in settings.CITIES.items():
-        ingester = LegistarIngester(
-            city_key=city_key,
-            city_config=city_config,
-            base_url=settings.LEGISTAR_BASE_URL,
-        )
         session = SessionLocal()
         try:
-            added, updated = ingester.ingest(session)
-            officials_count = ingester.ingest_officials(session)
+            added, updated = _ingest_city(city_key, city_config, session)
             logger.info(
                 "scheduled_ingestion_city_completed",
                 extra={
                     "city": city_key,
                     "bills_added": added,
                     "bills_updated": updated,
-                    "officials_synced": officials_count,
                 },
             )
         except Exception:
@@ -61,6 +56,30 @@ def run_ingestion_all_cities() -> None:
             session.close()
 
     logger.info("scheduled_ingestion_finished")
+
+
+def _ingest_city(city_key: str, city_config: dict, session) -> tuple[int, int]:
+    """Try API ingester first, fall back to HTML scraping on failure."""
+    api_ingester = LegistarIngester(
+        city_key=city_key,
+        city_config=city_config,
+        base_url=settings.LEGISTAR_BASE_URL,
+    )
+    try:
+        added, updated = api_ingester.ingest(session)
+        api_ingester.ingest_officials(session)
+        return added, updated
+    except Exception as exc:
+        logger.warning(
+            "api_ingest_failed_falling_back_to_html",
+            extra={"city": city_key, "error": str(exc)[:200]},
+        )
+        session.rollback()
+
+    html_ingester = HTMLLegistarIngester(
+        city_key=city_key, city_config=city_config
+    )
+    return html_ingester.ingest(session)
 
     # --- State legislatures via OpenStates ---
     if settings.OPENSTATES_API_KEY:

@@ -13,4 +13,6 @@ dependencies = [
     "numpy>=1.26.0",
     "feedparser>=6.0.0",
     "alembic>=1.18.4",
+    "scraper-legistar>=0.0.2",
+    "lxml>=6.1.0",
 ]
