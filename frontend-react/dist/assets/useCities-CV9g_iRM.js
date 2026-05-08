@@ -1,0 +1,1 @@
+import{r as t,v as i}from"./index-Dqx5Crcs.js";function r(){const[e,a]=t.useState([]),s=t.useCallback(async()=>{try{const c=await i();a(c)}catch{}},[]);return t.useEffect(()=>{s()},[s]),e}export{r as u};

@@ -1,10 +1,9 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "shadcn/tailwind.css";
 @import "@fontsource-variable/fraunces";
 @import "@fontsource-variable/plus-jakarta-sans";
 @import "@fontsource/dm-mono";
-
-@source "./src/**/*.svelte";
 
 @theme inline {
   --color-background: var(--background);
