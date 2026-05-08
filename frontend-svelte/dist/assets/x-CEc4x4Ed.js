@@ -1,0 +1,1 @@
+import{c as e,s as t}from"./Spinner-CBVVrys-.js";import{n}from"./index-X8t0bGpo.js";function r(r,i){let a=t(i,[`$$slots`,`$$events`,`$$legacy`]),o=[[`path`,{d:`M18 6 6 18`}],[`path`,{d:`m6 6 12 12`}]];n(r,e({name:`x`},()=>a,{get iconNode(){return o}}))}export{r as t};

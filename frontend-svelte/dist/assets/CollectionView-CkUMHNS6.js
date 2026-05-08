@@ -1,1 +1,0 @@
-import{a as e,c as t,i as n,n as r,o as i,r as a,s as o}from"./index-JOBNoah8.js";var s=n(`<div class="p-6"><h2 class="text-page-heading"> </h2> <p class="text-muted-foreground mt-2">Coming soon...</p></div>`);function c(n,c){var l=s(),u=i(l),d=i(u);t(u),o(2),t(l),e(()=>r(d,`Collection: ${c.slug??``}`)),a(n,l)}export{c as default};
