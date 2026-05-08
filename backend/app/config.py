@@ -35,6 +35,7 @@ class Settings(BaseSettings):
         "elpasotexas": {"name": "El Paso", "state": "TX"},
         "cityofcleveland": {"name": "Cleveland", "state": "OH"},
         "miamidade": {"name": "Miami-Dade County", "state": "FL"},
+        "dccouncil": {"name": "Washington DC", "state": "DC"},
         "chicago": {"name": "Chicago", "state": "IL"},
         "sfgov": {"name": "San Francisco", "state": "CA"},
         "seattle": {"name": "Seattle", "state": "WA"},
