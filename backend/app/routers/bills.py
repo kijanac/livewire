@@ -1,8 +1,9 @@
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -257,20 +258,34 @@ def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
     return build_stats(db)
 
 
-@router.post("/ingest", response_model=IngestResponse)
+@router.post("/ingest", response_model=None)
 def run_ingest(
+    background_tasks: BackgroundTasks,
     body: IngestRequest | None = None,
-) -> IngestResponse:
+):
+    """Queue ingestion of city and state bills. Runs in background to avoid Render timeout."""
+    background_tasks.add_task(_run_ingest_background, body)
+    city_count = 1 if (body and body.city) else len(settings.CITIES)
+    state_count = 0 if (body and body.city) else (
+        len(settings.STATES) if settings.OPENSTATES_API_KEY else 0
+    )
+    return {
+        "message": f"Ingestion queued for {city_count} cities + {state_count} states",
+        "bills_added": 0,
+        "bills_updated": 0,
+    }
+
+
+def _run_ingest_background(body: IngestRequest | None = None) -> None:
+    """Run the full ingest pipeline synchronously (called from background task)."""
     total_added = 0
     total_updated = 0
 
     if body and body.city:
         cities_to_ingest = {body.city: settings.CITIES.get(body.city)}
         if not cities_to_ingest[body.city]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown city: {body.city}",
-            )
+            logger.error("ingest_unknown_city", extra={"city": body.city})
+            return
     else:
         cities_to_ingest = settings.CITIES
 
@@ -281,14 +296,10 @@ def run_ingest(
             total_added += added
             total_updated += updated
         except Exception:
-            logger.exception(
-                "ingestion_failed",
-                extra={"city": city_key},
-            )
+            logger.exception("ingestion_failed", extra={"city": city_key})
         finally:
             session.close()
 
-    # Also run OpenStates state legislature ingest if configured
     if not body or not body.city:
         if settings.OPENSTATES_API_KEY:
             for state_code, state_config in settings.STATES.items():
@@ -304,17 +315,13 @@ def run_ingest(
                     total_added += added
                     total_updated += updated
                 except Exception:
-                    logger.exception(
-                        "openstates_ingestion_failed",
-                        extra={"state": state_code},
-                    )
+                    logger.exception("openstates_ingestion_failed", extra={"state": state_code})
                 finally:
                     session.close()
 
-    return IngestResponse(
-        message="Ingestion complete",
-        bills_added=total_added,
-        bills_updated=total_updated,
+    logger.info(
+        "ingestion_complete",
+        extra={"bills_added": total_added, "bills_updated": total_updated},
     )
 
 
