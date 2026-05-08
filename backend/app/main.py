@@ -10,6 +10,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import func
 
 from app.config import settings
 from app.database import SessionLocal, init_db
@@ -256,6 +257,44 @@ app.add_middleware(
 app.include_router(bills.router)
 app.include_router(collections.router)
 app.include_router(stories.router)
+
+
+@app.get("/api/status")
+def get_status():
+    """Health check with bill counts — confirms ingestion is working."""
+    from app.models import Bill
+
+    session = SessionLocal()
+    try:
+        total = session.query(Bill).count()
+        by_source = (
+            session.query(Bill.source, func.count(Bill.id))
+            .group_by(Bill.source)
+            .all()
+        )
+        by_level = (
+            session.query(Bill.jurisdiction_level, func.count(Bill.id))
+            .group_by(Bill.jurisdiction_level)
+            .all()
+        )
+        latest = (
+            session.query(Bill)
+            .filter(Bill.created_at.isnot(None))
+            .order_by(Bill.created_at.desc())
+            .first()
+        )
+        return {
+            "total_bills": total,
+            "by_source": {s: c for s, c in by_source},
+            "by_level": {l: c for l, c in by_level},
+            "latest_bill": {
+                "title": latest.title if latest else None,
+                "city": latest.city if latest else None,
+                "created_at": latest.created_at.isoformat() if latest and latest.created_at else None,
+            } if latest else None,
+        }
+    finally:
+        session.close()
 
 # Mount static files for frontend if the directory exists
 static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
