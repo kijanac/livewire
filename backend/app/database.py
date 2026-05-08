@@ -5,7 +5,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.config import settings
@@ -23,7 +23,6 @@ engine = create_engine(
 )
 
 # Enable WAL mode for concurrent reads during writes, and set busy timeout
-from sqlalchemy import event
 
 @event.listens_for(engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record):
@@ -49,26 +48,10 @@ def _alembic_config() -> Config:
 
 
 def init_db() -> None:
-    """Bring the database schema up to head via Alembic.
-
-    Pre-Alembic legacy DBs are stamped at head so we don't try to recreate tables
-    that already exist; fresh DBs and partially-migrated DBs run upgrade head.
-    """
+    """Bring the database schema up to head via Alembic."""
     from app import models  # noqa: F401
 
-    inspector = inspect(engine)
-    has_alembic_version = inspector.has_table("alembic_version")
-    existing_tables = set(inspector.get_table_names())
-    has_legacy_tables = "bills" in existing_tables
-
     cfg = _alembic_config()
-
-    if not has_alembic_version and has_legacy_tables:
-        # Legacy DB: stamp at head so Alembic knows the initial state,
-        # then let upgrade handle adding any missing tables/columns.
-        command.stamp(cfg, "head")
-        logger.info("alembic_stamped_head")
-
     command.upgrade(cfg, "head")
     logger.info(
         "alembic_upgrade_completed",
