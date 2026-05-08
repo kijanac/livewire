@@ -25,6 +25,12 @@ class Settings(BaseSettings):
 
     CITIES: dict = {
         # Major metros
+        "nyc": {"name": "New York City", "state": "NY"},
+        "phila": {"name": "Philadelphia", "state": "PA"},
+        "cityofdallas": {"name": "Dallas", "state": "TX"},
+        "dccouncil": {"name": "Washington DC", "state": "DC"},
+        "cityofcleveland": {"name": "Cleveland", "state": "OH"},
+        "miamidade": {"name": "Miami-Dade County", "state": "FL"},
         "chicago": {"name": "Chicago", "state": "IL"},
         "sfgov": {"name": "San Francisco", "state": "CA"},
         "seattle": {"name": "Seattle", "state": "WA"},
