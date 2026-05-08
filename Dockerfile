@@ -22,6 +22,8 @@ RUN uv sync --no-dev
 
 # Copy backend source
 COPY backend/app ./app
+COPY backend/alembic ./alembic
+COPY backend/alembic.ini ./alembic.ini
 
 # Copy built frontend from stage 1
 COPY --from=frontend-build /app/frontend/dist ./static
