@@ -67,9 +67,9 @@
     >
       <SelectTrigger>{levelLabel}</SelectTrigger>
       <SelectContent>
-        <SelectItem value={CLEAR}>All Levels</SelectItem>
-        <SelectItem value="city">City Council</SelectItem>
-        <SelectItem value="state">State Legislature</SelectItem>
+        <SelectItem value={CLEAR} label="All Levels">All Levels</SelectItem>
+        <SelectItem value="city" label="City Council">City Council</SelectItem>
+        <SelectItem value="state" label="State Legislature">State Legislature</SelectItem>
       </SelectContent>
     </Select>
 
@@ -79,9 +79,9 @@
     >
       <SelectTrigger>{cityLabel}</SelectTrigger>
       <SelectContent>
-        <SelectItem value={CLEAR}>Any City</SelectItem>
+        <SelectItem value={CLEAR} label="Any City">Any City</SelectItem>
         {#each cities as city (city.id)}
-          <SelectItem value={city.id}>{city.name}, {city.state}</SelectItem>
+          <SelectItem value={city.id} label={`${city.name}, ${city.state}`}>{city.name}, {city.state}</SelectItem>
         {/each}
       </SelectContent>
     </Select>
@@ -92,9 +92,9 @@
     >
       <SelectTrigger>{topicLabel}</SelectTrigger>
       <SelectContent>
-        <SelectItem value={CLEAR}>Any Issue</SelectItem>
+        <SelectItem value={CLEAR} label="Any Issue">Any Issue</SelectItem>
         {#each topics as topic (topic)}
-          <SelectItem value={topic}>{formatTopic(topic)}</SelectItem>
+          <SelectItem value={topic} label={formatTopic(topic)}>{formatTopic(topic)}</SelectItem>
         {/each}
       </SelectContent>
     </Select>
@@ -126,9 +126,9 @@
       >
         <SelectTrigger>{filters.status || "Any Status"}</SelectTrigger>
         <SelectContent>
-          <SelectItem value={CLEAR}>Any Status</SelectItem>
+          <SelectItem value={CLEAR} label="Any Status">Any Status</SelectItem>
           {#each COMMON_STATUSES as status (status)}
-            <SelectItem value={status}>{status}</SelectItem>
+            <SelectItem value={status} label={status}>{status}</SelectItem>
           {/each}
         </SelectContent>
       </Select>
@@ -139,9 +139,9 @@
       >
         <SelectTrigger>{filters.type_name || "Any Type"}</SelectTrigger>
         <SelectContent>
-          <SelectItem value={CLEAR}>Any Type</SelectItem>
+          <SelectItem value={CLEAR} label="Any Type">Any Type</SelectItem>
           {#each COMMON_TYPES as type (type)}
-            <SelectItem value={type}>{type}</SelectItem>
+            <SelectItem value={type} label={type}>{type}</SelectItem>
           {/each}
         </SelectContent>
       </Select>
@@ -152,9 +152,9 @@
       >
         <SelectTrigger>{filters.urgency === "urgent" ? "This Week" : filters.urgency === "soon" ? "This Month" : "Any Timeline"}</SelectTrigger>
         <SelectContent>
-          <SelectItem value={CLEAR}>Any Timeline</SelectItem>
-          <SelectItem value="urgent">This Week</SelectItem>
-          <SelectItem value="soon">This Month</SelectItem>
+          <SelectItem value={CLEAR} label="Any Timeline">Any Timeline</SelectItem>
+          <SelectItem value="urgent" label="This Week">This Week</SelectItem>
+          <SelectItem value="soon" label="This Month">This Month</SelectItem>
         </SelectContent>
       </Select>
     </div>

@@ -46,9 +46,9 @@
     >
       <SelectTrigger>{radarStore.selectedTopic ? formatTopic(radarStore.selectedTopic) : "Any Issue"}</SelectTrigger>
       <SelectContent>
-        <SelectItem value={CLEAR}>Any Issue</SelectItem>
+        <SelectItem value={CLEAR} label="Any Issue">Any Issue</SelectItem>
         {#each topicsStore.topics as topic (topic)}
-          <SelectItem value={topic}>{formatTopic(topic)}</SelectItem>
+          <SelectItem value={topic} label={formatTopic(topic)}>{formatTopic(topic)}</SelectItem>
         {/each}
       </SelectContent>
     </Select>

@@ -50,9 +50,9 @@
     >
       <SelectTrigger>{storiesStore.filters.city ? (cities.find(c => c.id === storiesStore.filters.city)?.name ?? storiesStore.filters.city) : "All Cities"}</SelectTrigger>
       <SelectContent>
-        <SelectItem value={CLEAR}>All Cities</SelectItem>
+        <SelectItem value={CLEAR} label="All Cities">All Cities</SelectItem>
         {#each citiesStore.cities as c (c.id)}
-          <SelectItem value={c.id}>{c.name}</SelectItem>
+          <SelectItem value={c.id} label={c.name}>{c.name}</SelectItem>
         {/each}
       </SelectContent>
     </Select>
@@ -65,9 +65,9 @@
     >
       <SelectTrigger>{storiesStore.filters.category ? (CATEGORY_LABELS[storiesStore.filters.category]?.label ?? storiesStore.filters.category) : "All Categories"}</SelectTrigger>
       <SelectContent>
-        <SelectItem value={CLEAR}>All Categories</SelectItem>
+        <SelectItem value={CLEAR} label="All Categories">All Categories</SelectItem>
         {#each Object.entries(CATEGORY_LABELS) as [key, { label }]}
-          <SelectItem value={key}>{label}</SelectItem>
+          <SelectItem value={key} label={label}>{label}</SelectItem>
         {/each}
       </SelectContent>
     </Select>
@@ -80,9 +80,9 @@
     >
       <SelectTrigger>{storiesStore.filters.topic ? formatTopic(storiesStore.filters.topic) : "All Topics"}</SelectTrigger>
       <SelectContent>
-        <SelectItem value={CLEAR}>All Topics</SelectItem>
+        <SelectItem value={CLEAR} label="All Topics">All Topics</SelectItem>
         {#each topicsStore.topics as t (t)}
-          <SelectItem value={t}>{formatTopic(t)}</SelectItem>
+          <SelectItem value={t} label={formatTopic(t)}>{formatTopic(t)}</SelectItem>
         {/each}
       </SelectContent>
     </Select>
