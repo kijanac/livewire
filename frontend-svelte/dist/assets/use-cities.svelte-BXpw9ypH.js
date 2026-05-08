@@ -1,0 +1,1 @@
+import{St as e,at as t,bt as n,dt as r,o as i,vt as a}from"./api-zwO9BReo.js";function o(){let o=e(a([]));return r(()=>{let e=new AbortController;return i(e.signal).then(e=>{n(o,e,!0)}).catch(e=>{e.name!==`AbortError`&&console.error(`fetchCities failed`,e)}),()=>e.abort()}),{get cities(){return t(o)}}}export{o as t};

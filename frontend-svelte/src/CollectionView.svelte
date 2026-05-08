@@ -20,27 +20,48 @@
   useErrorToast(store.error, "Failed to load collection");
   useErrorToast(store.mutationError, "Failed to save changes");
 
-  let editState = $state<{ kind: string; value?: string; itemId?: number }>({ kind: "idle" });
+  // Flat edit state — Svelte 5 discriminated unions don't narrow in templates (issue #12150)
+  let editingName = $state(false);
+  let editNameValue = $state("");
+  let editingDesc = $state(false);
+  let editDescValue = $state("");
+  let editingNote = $state<{ itemId: number; value: string } | null>(null);
   let showAddModal = $state(false);
   let copied = $state(false);
 
   function handleSaveName() {
-    if (editState.kind !== "name") return;
-    const value = editState.value ?? "";
-    editState = { kind: "idle" };
-    store.saveName(value);
+    editingName = false;
+    store.saveName(editNameValue);
   }
 
   function handleSaveDesc() {
-    if (editState.kind !== "desc") return;
-    const value = editState.value ?? "";
-    editState = { kind: "idle" };
-    store.saveDescription(value);
+    editingDesc = false;
+    store.saveDescription(editDescValue);
   }
 
-  function handleSaveNote(itemId: number, value: string) {
-    editState = { kind: "idle" };
+  function handleSaveNote() {
+    if (!editingNote) return;
+    const { itemId, value } = editingNote;
+    editingNote = null;
     store.saveNote(itemId, value);
+  }
+
+  function startEditName() {
+    if (store.collection) {
+      editNameValue = store.collection.name;
+      editingName = true;
+    }
+  }
+
+  function startEditDesc() {
+    if (store.collection) {
+      editDescValue = store.collection.description || "";
+      editingDesc = true;
+    }
+  }
+
+  function startEditNote(itemId: number, currentNote: string) {
+    editingNote = { itemId, value: currentNote };
   }
 
   function handleShare() {
@@ -49,9 +70,6 @@
     copied = true;
     setTimeout(() => (copied = false), 2000);
   }
-
-  let isEditingName = $derived(editState.kind === "name");
-  let isEditingDesc = $derived(editState.kind === "desc");
 </script>
 
 {#if store.loading}
@@ -89,15 +107,14 @@
     <div class="mb-6">
       <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
         <div class="flex-1">
-          {#if isEditingName}
+          {#if editingName}
             <Input
               type="text"
-              value={editState.value ?? ""}
-              oninput={(e) => (editState.value = e.currentTarget.value)}
+              bind:value={editNameValue}
               onblur={handleSaveName}
               onkeydown={(e) => {
                 if (e.key === "Enter") handleSaveName();
-                else if (e.key === "Escape") editState = { kind: "idle" };
+                else if (e.key === "Escape") editingName = false;
               }}
               autofocus
               class="text-2xl font-bold text-foreground bg-transparent border-b-2 border-primary outline-none w-full"
@@ -105,18 +122,17 @@
           {:else}
             <h1 class="text-page-heading uppercase tracking-tight">
               <button type="button" class="hover:text-primary transition-colors text-left"
-                onclick={() => (editState = { kind: "name", value: collection.name })}
+                onclick={startEditName}
                 aria-label="Edit collection name">{collection.name}</button>
             </h1>
           {/if}
 
-          {#if isEditingDesc}
+          {#if editingDesc}
             <textarea
-              value={editState.value ?? ""}
-              oninput={(e) => (editState.value = e.currentTarget.value)}
+              bind:value={editDescValue}
               onblur={handleSaveDesc}
               onkeydown={(e) => {
-                if (e.key === "Escape") editState = { kind: "idle" };
+                if (e.key === "Escape") editingDesc = false;
               }}
               autofocus
               rows={2}
@@ -125,7 +141,7 @@
             />
           {:else}
             <button type="button" class="mt-1 text-sm text-muted-foreground hover:text-foreground transition-colors text-left"
-              onclick={() => (editState = { kind: "desc", value: collection.description || "" })}
+              onclick={startEditDesc}
               aria-label="Edit description">{collection.description || "What's this collection for?"}</button>
           {/if}
         </div>
@@ -161,7 +177,7 @@
       <div class="space-y-3">
         {#each collection.items as item (item.id)}
           {@const bill = item.bill}
-          {@const isEditingNote = editState.kind === "note" && editState.itemId === item.id}
+          {@const isEditingNote = editingNote?.itemId === item.id}
 
           <Card class={cn(
             "overflow-hidden py-0 gap-0",
@@ -215,15 +231,14 @@
             <div class="bg-accent/10 border-t border-accent/20 px-4 py-2.5">
               {#if isEditingNote}
                 <textarea
-                  value={editState.value ?? ""}
-                  oninput={(e) => (editState.value = e.currentTarget.value)}
-                  onblur={() => handleSaveNote(item.id, (editState as { value: string }).value)}
+                  bind:value={editingNote.value}
+                  onblur={handleSaveNote}
                   onkeydown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
-                      handleSaveNote(item.id, (editState as { value: string }).value);
+                      handleSaveNote();
                     } else if (e.key === "Escape") {
-                      editState = { kind: "idle" };
+                      editingNote = null;
                     }
                   }}
                   autofocus
@@ -233,7 +248,7 @@
                 />
               {:else}
                 <button type="button" class="text-sm text-foreground hover:text-primary transition-colors min-h-[1.25rem] text-left w-full"
-                  onclick={() => (editState = { kind: "note", itemId: item.id, value: item.note || "" })}
+                  onclick={() => startEditNote(item.id, item.note || "")}
                   aria-label="Edit note">
                   {#if item.note}
                     {item.note}
